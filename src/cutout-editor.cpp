@@ -17,14 +17,17 @@ the Free Software Foundation; either version 2 of the License, or
 #include <util/platform.h>
 #include <plugin-support.h>
 
+#include <QCoreApplication>
 #include <QDialog>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QEvent>
 #include <QLineF>
+#include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QSlider>
@@ -33,79 +36,152 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QWidget>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <functional>
+#include <utility>
 #include <vector>
 
 namespace {
 
-struct FrameGrab {
-	obs_source_t *source = nullptr;
-	std::vector<uint8_t> bgra;
+struct CaptureJob {
+	std::atomic<bool> cancelled{false};
+	obs_weak_source_t *weak = nullptr;
+	gs_texrender_t *texrender = nullptr;
+	gs_stagesurf_t *stagesurf = nullptr;
 	uint32_t cx = 0;
 	uint32_t cy = 0;
-	bool ok = false;
+	int stage = 0;
+	bool loadExisting = false;
+	std::function<void(QImage, bool)> onFrame;
+	std::function<void()> onFail;
 };
 
-void capture_on_graphics(void *param)
+void capture_tick(void *param, float);
+
+void capture_fail(CaptureJob *job)
 {
-	auto *grab = static_cast<FrameGrab *>(param);
-	if (!grab->source)
-		return;
-
-	const uint32_t cx = obs_source_get_base_width(grab->source);
-	const uint32_t cy = obs_source_get_base_height(grab->source);
-	if (cx == 0 || cy == 0)
-		return;
-
-	gs_texrender_t *render = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
-	gs_texrender_reset(render);
-
-	if (gs_texrender_begin(render, cx, cy)) {
-		struct vec4 clear;
-		vec4_zero(&clear);
-		gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
-		gs_ortho(0.0f, static_cast<float>(cx), 0.0f, static_cast<float>(cy), -100.0f, 100.0f);
-		obs_source_video_render(grab->source);
-		gs_texrender_end(render);
+	obs_log(LOG_WARNING, "cutout capture failed (stage %d size %ux%u)", job->stage, job->cx, job->cy);
+	if (job->stagesurf) {
+		gs_stagesurface_destroy(job->stagesurf);
+		job->stagesurf = nullptr;
 	}
-
-	gs_texture_t *tex = gs_texrender_get_texture(render);
-	if (!tex) {
-		gs_texrender_destroy(render);
-		return;
+	if (job->texrender) {
+		gs_texrender_destroy(job->texrender);
+		job->texrender = nullptr;
 	}
-
-	gs_stagesurf_t *stage = gs_stagesurface_create(cx, cy, GS_BGRA);
-	gs_stage_texture(stage, tex);
-	gs_flush();
-
-	uint8_t *data = nullptr;
-	uint32_t linesize = 0;
-	if (gs_stagesurface_map(stage, &data, &linesize)) {
-		grab->bgra.resize(static_cast<size_t>(cx) * cy * 4);
-		for (uint32_t y = 0; y < cy; y++)
-			memcpy(grab->bgra.data() + static_cast<size_t>(y) * cx * 4, data + y * linesize, cx * 4);
-		gs_stagesurface_unmap(stage);
-		grab->cx = cx;
-		grab->cy = cy;
-		grab->ok = true;
-	}
-
-	gs_stagesurface_destroy(stage);
-	gs_texrender_destroy(render);
+	obs_remove_tick_callback(capture_tick, job);
+	auto fail = job->onFail;
+	QMetaObject::invokeMethod(
+		QCoreApplication::instance(),
+		[fail]() {
+			if (fail)
+				fail();
+		},
+		Qt::QueuedConnection);
 }
 
-QImage grab_source_frame(obs_source_t *source)
+void capture_tick(void *param, float)
 {
-	FrameGrab grab;
-	grab.source = source;
-	obs_queue_task(OBS_TASK_GRAPHICS, capture_on_graphics, &grab, true);
-	if (!grab.ok)
-		return {};
+	auto *job = static_cast<CaptureJob *>(param);
+	if (job->cancelled.load())
+		return;
 
-	QImage img(grab.bgra.data(), static_cast<int>(grab.cx), static_cast<int>(grab.cy),
-		   static_cast<int>(grab.cx * 4), QImage::Format_ARGB32);
-	return img.copy();
+	obs_enter_graphics();
+
+	if (job->stage == 0) {
+		obs_source_t *source = obs_weak_source_get_source(job->weak);
+		if (!source) {
+			capture_fail(job);
+			obs_leave_graphics();
+			return;
+		}
+
+		job->cx = obs_source_get_width(source);
+		job->cy = obs_source_get_height(source);
+		if (!job->cx || !job->cy) {
+			obs_source_release(source);
+			capture_fail(job);
+			obs_leave_graphics();
+			return;
+		}
+
+		const enum gs_color_space space = GS_CS_SRGB;
+		const enum gs_color_format format = gs_get_format_from_space(space);
+		job->texrender = gs_texrender_create(format, GS_ZS_NONE);
+		job->stagesurf = gs_stagesurface_create(job->cx, job->cy, format);
+
+		if (gs_texrender_begin_with_color_space(job->texrender, job->cx, job->cy, space)) {
+			struct vec4 zero;
+			vec4_zero(&zero);
+			gs_clear(GS_CLEAR_COLOR, &zero, 0.0f, 0);
+			gs_ortho(0.0f, (float)job->cx, 0.0f, (float)job->cy, -100.0f, 100.0f);
+			gs_blend_state_push();
+			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+			obs_source_inc_showing(source);
+			obs_source_video_render(source);
+			obs_source_dec_showing(source);
+			gs_blend_state_pop();
+			gs_texrender_end(job->texrender);
+		}
+		obs_source_release(source);
+	} else if (job->stage == 1) {
+		gs_texture_t *tex = job->texrender ? gs_texrender_get_texture(job->texrender) : nullptr;
+		if (!tex || !job->stagesurf) {
+			capture_fail(job);
+			obs_leave_graphics();
+			return;
+		}
+		gs_stage_texture(job->stagesurf, tex);
+	} else if (job->stage == 2) {
+		uint8_t *data = nullptr;
+		uint32_t linesize = 0;
+		QImage image;
+		if (job->stagesurf && gs_stagesurface_map(job->stagesurf, &data, &linesize)) {
+			image = QImage((int)job->cx, (int)job->cy, QImage::Format_RGBX8888);
+			for (uint32_t y = 0; y < job->cy; y++)
+				memcpy(image.scanLine((int)y), data + y * linesize, (int)job->cx * 4);
+			gs_stagesurface_unmap(job->stagesurf);
+		}
+
+		if (job->stagesurf) {
+			gs_stagesurface_destroy(job->stagesurf);
+			job->stagesurf = nullptr;
+		}
+		if (job->texrender) {
+			gs_texrender_destroy(job->texrender);
+			job->texrender = nullptr;
+		}
+		obs_remove_tick_callback(capture_tick, job);
+		obs_leave_graphics();
+
+		if (image.isNull()) {
+			auto fail = job->onFail;
+			QMetaObject::invokeMethod(
+				QCoreApplication::instance(),
+				[fail]() {
+					if (fail)
+						fail();
+				},
+				Qt::QueuedConnection);
+			return;
+		}
+
+		const bool loadExisting = job->loadExisting;
+		const QImage copy = image.copy();
+		auto cb = job->onFrame;
+		QMetaObject::invokeMethod(
+			QCoreApplication::instance(),
+			[cb, copy, loadExisting]() {
+				if (cb)
+					cb(copy, loadExisting);
+			},
+			Qt::QueuedConnection);
+		return;
+	}
+
+	obs_leave_graphics();
+	job->stage++;
 }
 
 class MaskCanvas : public QWidget {
@@ -345,7 +421,7 @@ public:
 			updateBrushLabel();
 			canvas_->update();
 		});
-		connect(refresh, &QPushButton::clicked, this, [this]() { captureFrame(false); });
+		connect(refresh, &QPushButton::clicked, this, [this]() { startCapture(false); });
 		connect(clear, &QPushButton::clicked, this, [this]() { canvas_->clearMask(); });
 		connect(ok, &QPushButton::clicked, this, [this]() { applyAndClose(); });
 		connect(cancel, &QPushButton::clicked, this, [this]() { reject(); });
@@ -365,12 +441,39 @@ public:
 		root->addWidget(canvas_, 1);
 		root->addLayout(tools);
 
-		captureFrame(true);
+		startCapture(true);
 	}
 
+	~CutoutDialog() override { stopCapture(); }
+
 private:
-	void captureFrame(bool loadExisting)
+	void stopCapture()
 	{
+		if (!job_)
+			return;
+		job_->cancelled = true;
+		obs_remove_tick_callback(capture_tick, job_);
+		CaptureJob *j = job_;
+		job_ = nullptr;
+		obs_queue_task(
+			OBS_TASK_GRAPHICS,
+			[](void *p) {
+				auto *job = static_cast<CaptureJob *>(p);
+				if (job->stagesurf)
+					gs_stagesurface_destroy(job->stagesurf);
+				if (job->texrender)
+					gs_texrender_destroy(job->texrender);
+				if (job->weak)
+					obs_weak_source_release(job->weak);
+				delete job;
+			},
+			j, false);
+	}
+
+	void startCapture(bool loadExisting)
+	{
+		stopCapture();
+
 		obs_source_t *target = hud_mask_get_target(ctx_);
 		if (!target) {
 			QMessageBox::warning(this, windowTitle(),
@@ -378,14 +481,28 @@ private:
 			return;
 		}
 
-		const QImage img = grab_source_frame(target);
-		obs_source_release(target);
-		if (img.isNull()) {
-			QMessageBox::warning(this, windowTitle(),
+		job_ = new CaptureJob();
+		job_->weak = obs_source_get_weak_source(target);
+		job_->loadExisting = loadExisting;
+		QPointer<CutoutDialog> self(this);
+		job_->onFrame = [self](QImage img, bool existing) {
+			if (self)
+				self->onFrame(std::move(img), existing);
+		};
+		job_->onFail = [self]() {
+			if (!self)
+				return;
+			QMessageBox::warning(self, self->windowTitle(),
 					     QString::fromUtf8(obs_module_text("HUDMask.Editor.CaptureFailed")));
-			return;
-		}
+		};
+		obs_source_release(target);
+		obs_add_tick_callback(capture_tick, job_);
+	}
 
+	void onFrame(QImage img, bool loadExisting)
+	{
+		if (img.isNull())
+			return;
 		const QSize old = canvas_->mask.size();
 		canvas_->setFrame(img);
 		if (loadExisting && !ctx_->mask_path.empty()) {
@@ -467,6 +584,7 @@ private:
 
 	hud_mask *ctx_;
 	MaskCanvas *canvas_;
+	CaptureJob *job_ = nullptr;
 };
 
 } // namespace
