@@ -1,12 +1,12 @@
 # Plugin sources
 
-Empty on purpose. C++ implementation starts after the GitHub MVP issues are agreed.
+Empty on purpose. Implementation starts after the revised GitHub MVP issues.
 
 When work begins:
 
 1. Bootstrap from https://github.com/obsproject/obs-plugintemplate
-2. Target OBS Studio 32, Windows, 64-bit
-3. Module display name: **HUD Mask**
-4. Register an `OBS_SOURCE_TYPE_INPUT` with custom draw and video (no audio)
-
-Do not add a filter, dock, or CV library in the first PR. Source + crop + PNG mask first.
+2. OBS Studio 32; dogfood Windows; CI also emits macOS/Linux packages
+3. Display name: **HUD Mask**
+4. `OBS_SOURCE_TYPE_INPUT`, custom draw, video only
+5. First useful UI is the **cutout editor** (live preview + highlighter), not crop spinboxes
+6. Do not add a game database, motion calibration, or CV on the render thread in the first PR

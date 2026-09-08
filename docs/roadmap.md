@@ -1,64 +1,48 @@
 # Roadmap
 
-Phased so each step is usable in a real Stream Suite scene. GitHub issues map to these phases.
+## Phase 0 — this repo (done)
 
-## Phase 0 — this repo
+Docs, issues, empty `src/`. No OBS binary.
 
-- Product docs (`docs/`)
-- Issue templates and feature issues
-- Empty plugin layout (`src/`, `data/`, `profiles/`)
-- No OBS binary
+## Phase MVP — cut-out exists
 
-## Phase MVP — "one source instead of three filters"
+**Goal:** Add source → pick what to sample → highlight a UI element on a live view → plugin cleans the highlight and crops → I can drag that cut-out around the vertical canvas.
 
-**Goal:** On the Aitum Vertical canvas I can add a HUD Mask, point it at the game, set crop + PNG, and get the same look as clone + crop + Image Mask/Blend.
+- Bootstrap from obs-plugintemplate (OBS 32)
+- HUD Mask source that samples another source (scene / game capture / browser / …)
+- **Custom cutout editor** in the add/properties flow: live preview + highlighter + cleanup + crop
+- Transformable scene item on any OBS canvas (dogfood: Aitum Vertical)
+- Windows is the dogfood platform; CI still produces the usual OBS plugin artifacts (installer, plugin zip, source zip) and template macOS/Linux packages
+- Manual hide still works (stock visibility)
 
-- Bootstrap from obs-plugintemplate (Windows, OBS 32)
-- HUD Mask source: sample, crop, PNG mask, alpha output
-- Properties: source picker, crop insets, mask file, feather
-- Existing `Vertical UI Masks` PNGs work unchanged
-- Manual hide still works (stock source visibility)
-- Install and confirm it appears on the Stream Suite vertical canvas and can be transformed
+**Exit:** I can recreate the WoW vertical layout (meter, minimap, action bar as three HUD Mask sources) **without** Photoshop, crop filters, or source clones. Cleanup does not have to be perfect; I can re-highlight.
 
-**Exit:** NTE radar + NTE abilities look like they do today, with fewer OBS objects.
+Existing PNG masks are **not** a requirement. They are a reference for how feathered cut-outs should look.
 
-## Phase v1 — "don't show holes when the HUD is gone"
+## Phase v1 — hide when the UI is gone (public)
 
-**Goal:** The NTE screenshots of menu and car no longer bleed world through the ability holes, without me toggling visibility by hand.
+**Goal:** The cut-out does not show world/loading/menu through a hole when that UI is missing. This is the “stable, share the repo” bar.
 
-- Presence detection (probe, then template)
-- Hysteresis + fade
-- Per-instance (abilities hide, radar can stay)
-- Capture-reference in properties
-- Game profile JSON that can stamp multiple slots
-- Test matrix: NTE menu, NTE car, NTE default combat, one other game (Destiny radar or Stellar Blade health)
+- Presence of the **element**, not its contents (action-bar icons change; the bar is still there)
+- Per-instance hide (meter can hide, minimap can stay)
+- Hysteresis + fade so it does not flicker
+- Re-highlight from properties if I need to redo a mask
+- Windows installer from CI that drops files into the OBS plugins folder
 
-**Exit:** I can play NTE on vertical without micromanaging ability visibility, and a false hide is rare enough to ignore.
+**Exit:** I can play WoW and NTE (and a third game we have never authored for) on vertical without toggling these sources by hand. Then the repo can go public.
 
-## Phase v1.5 — "setup is not Photoshop + a calculator"
+## After v1
 
-- Calibration dock: snapshot, **roughly mark / circle** HUD pieces, preview mask, presence score meter
-- Edge / flood snap from the mark so the user does not trace pixel-perfect
-- Import a folder of existing masks into a profile
-- Optional: remember last crop per game
+Only if v1 is boringly usable:
 
-## Phase v2 — "help make the mask, adapt when the kit changes"
+- Better cleanup (tighter hugs, eraser, multiple strokes)
+- Mask that slowly updates if a panel resizes (Details meter growing in combat)
+- macOS / Linux as tested platforms, not just CI artifacts
 
-Experiments, each allowed to fail without blocking v1:
+## Killed / not doing
 
-- **Request movement** (~2s look-around) and keep low-variance pixels as HUD candidates
-- Assisted mask from a marked crop (threshold / flood / edges)
-- NTE ability circle detection → generated mask + hide when count is 0
-- Profile variants (3-slot vs 4-slot) with auto-pick by best template
-
-## Explicitly later / maybe never
-
-- Full-frame automatic HUD discovery
-- macOS / Linux as a supported platform
-- HDR-perfect sampling
-- Filter form factor
-- Any Aitum-private hooks
-
-## Suggested first implementation issues
-
-See GitHub. The intended first code issue is plugin bootstrap, then the HUD Mask source, then PNG parity, then presence on NTE abilities.
+- Motion / “walk around while we detect UI”
+- A growing in-plugin database of games
+- Full-frame “find every HUD with no highlight”
+- Auto-layout of cut-outs on the vertical canvas
+- Shipping Photoshop PNGs as the way to set up a game

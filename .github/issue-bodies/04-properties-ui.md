@@ -2,35 +2,25 @@
 
 MVP
 
-## Problem
-
-Crop math today lives in a Photoshop reference image and OBS crop filter spinboxes. The new source needs the same controls in one properties dialog.
-
 ## Goal
 
-HUD Mask properties a streamer can set without a dock:
-
-- Source picker (existing sources)
-- Crop left / top / right / bottom
-- Mask PNG file path + small preview
-- Feather (0 = use PNG as-is)
-- Optional: “include target filters”
-- Optional: opacity (for testing)
+Stock properties sheet is small. The highlighter lives in a custom window (#10). This issue is the glue.
 
 ## In scope
 
-- Standard OBS properties (`obs_properties`)
-- Persist settings in the scene collection
-- Preview of the mask file in the dialog if OBS allows it easily
+- Sampled-source dropdown (any source type)
+- Button **Edit cutout…** that opens the highlighter window
+- Persist: target source, mask, crop, feather
+- Re-open editor later to redo a highlight
+- Optional: invert, feather slider
 
 ## Out of scope
 
-- Drawing a rectangle on a snapshot (that is the calibration dock, v1.5)
-- Presence controls (v1 — can be a disabled/hidden group until then)
+- Crop inset spinboxes as the primary setup (that is the old Photoshop workflow)
+- Presence controls until #7 (can be a hidden/disabled group)
 
 ## Acceptance
 
-- [ ] Settings survive OBS restart
-- [ ] Changing crop/mask updates the vertical canvas live
-- [ ] Crop language matches current notes (insets from each edge, not x/y/w/h only — showing both is fine)
-- [ ] Invalid file path does not crash
+- [ ] Settings survive OBS restart / scene collection reload
+- [ ] Changing the sampled source updates the live editor
+- [ ] Invalid target does not crash

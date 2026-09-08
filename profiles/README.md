@@ -1,17 +1,7 @@
-# Game profiles
+# Not a game database
 
-JSON packs that describe HUD slots for a game: crop insets, mask files, presence settings.
+This folder was a leftover from an earlier idea (ship JSON packs per game). That is **not** the product.
 
-Nothing ships here yet except the schema. Personal PNGs/PSDs stay in OneDrive (`Vertical UI Masks`) and are not committed.
+Cut-out settings (sampled source, mask, crop, presence signature) live on the HUD Mask source and persist in the OBS scene collection. There is no in-plugin list of games.
 
-First profiles to encode once the source exists:
-
-| Game | Slots |
-| --- | --- |
-| NTE | Radar, Abilities, Level Bar |
-| Destiny | Radar, Weapons and Ammo |
-| Stellar Blade | Abilities, Health Bar |
-| Marathon | Health Bar, Weapons and Ammo |
-| Alien Isolation | Health Bar |
-
-Crop values use OBS-style insets from each edge of the sampled source, matching `docs/current-workflow.md`.
+This directory can be removed when we start the plugin bootstrap.

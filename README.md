@@ -1,86 +1,59 @@
 # OBS Vertical Mask Generator
 
-An OBS Studio plugin that extracts HUD / UI pieces from a horizontal game source and places them on an Aitum Vertical (Stream Suite) canvas — without the current clone → crop → handmade PNG mask stack, and without leaving empty holes when the HUD is gone.
+An OBS Studio plugin that **cuts out an element** from any source (game capture, scene, browser, display capture, …) so you can place that piece anywhere.
 
-This repo is in the planning / scaffolding stage. Plugin code has not been written yet. Product intent, feasibility, and the first GitHub issues live in `docs/`.
+The reason it exists: Aitum Vertical / Stream Suite. Horizontal games do not fit a phone, so you crop the world into 9:16 and need the HUD that just got chopped off — minimap, action bars, meters, abilities — as separate scene items. Technically it is not Aitum-specific and not vertical-specific. It is a normal OBS source.
 
-## What this is for
+This repo is private and in planning. There is no installer yet. It will go **public when v1 is stable**. The plugin will be **free to use** (GPL-2.0-or-later).
 
-Vertical streams (TikTok, YouTube Shorts, Instagram) cannot show a full 16:9 HUD. The useful bits — minimap, abilities, health, ammo — sit in the corners of the horizontal capture and need to be cut out, masked, and re-laid on a 9:16 canvas.
+## Intended use
 
-Today that is done by hand in OBS + Photoshop. It looks great when the HUD is present and the character layout matches the PNG. It looks wrong on menus, loading screens, cutscenes, vehicles, and character-specific ability bars.
+1. On the Aitum Vertical (Stream Suite) scene, **Add Source → HUD Mask**.
+2. Pick the source to sample.
+3. On a **live view**, highlight the UI with a rough highlighter.
+4. The plugin cleans the highlight so it hugs the element, and crops to it.
+5. Drag / scale the cut-out on the canvas yourself. It does not auto-layout.
+6. If that UI disappears (loading, vehicle, hidden HUD, cutscene), the source hides until it comes back.
 
-This plugin is meant to:
+One source per element. No per-game database. No Photoshop. No crop filters. No “walk around so we can detect UI.”
 
-1. Replace the clone + crop + image-mask workflow with **one source**.
-2. **Hide itself** when that HUD is not actually on screen.
-3. Later, **help generate and adjust** masks instead of requiring a new Photoshop file per game / character.
-
-## What it is not
-
-- Not an Aitum fork and not a Stream Suite feature request. It is a normal OBS source you add to the vertical canvas.
-- Not a game overlay injector and not a memory reader. It only looks at frames OBS already has.
-- Not "select a source and magically find every UI element in every game" for v1. That is a research goal, not the first ship.
-
-## Intended OBS object
-
-A new source type named **HUD Mask**.
-
-- Pick an existing source (usually the raw game capture / scene).
-- Crop to one HUD element.
-- Apply a mask (imported PNG first, generated later).
-- Output only those pixels with alpha.
-- Place, scale, and drag it on the Aitum Vertical canvas like any other source.
-- Optionally fade to transparent when the HUD is not detected in that crop.
-
-One source instance per HUD element (abilities, radar, health, …). Independent hide is required: in Neverness to Everness the minimap can stay while abilities disappear in a vehicle.
+NTE and WoW are examples of the same job, not special cases.
 
 ## Docs
 
 | Doc | What it covers |
 | --- | --- |
-| [docs/vision.md](docs/vision.md) | Problem, product shape, success criteria |
-| [docs/current-workflow.md](docs/current-workflow.md) | How masks are made and used today |
-| [docs/architecture.md](docs/architecture.md) | OBS plugin shape, data model, render path |
-| [docs/feasibility.md](docs/feasibility.md) | What we can, might, and cannot do |
-| [docs/roadmap.md](docs/roadmap.md) | MVP → v1 → v2 phasing |
+| [docs/vision.md](docs/vision.md) | Product, success bar, non-goals |
+| [docs/current-workflow.md](docs/current-workflow.md) | How this is done today (the stack to delete) |
+| [docs/architecture.md](docs/architecture.md) | Source, cutout editor, render, presence |
+| [docs/feasibility.md](docs/feasibility.md) | What we can and will not do |
+| [docs/prior-art.md](docs/prior-art.md) | What already exists (spoiler: not this) |
+| [docs/roadmap.md](docs/roadmap.md) | MVP (cut-out) → v1 (auto-hide, public) |
 
-## Target environment (first)
+## Target
 
-- Windows
-- OBS Studio 32+
-- Aitum Stream Suite (vertical canvas)
-- Existing PNG masks in `C:\Users\Milz\OneDrive\Streams\Vertical UI Masks` as the compatibility baseline
-
-macOS / Linux are not a v1 goal.
-
-**Free to use.** Licensed under GPL-2.0-or-later. That is the same family of license as OBS Studio; linking `libobs` requires a GPL-compatible license. There will be no paid tier, no license key, and no telemetry.
+- Dogfood: Windows, OBS Studio 32+, Aitum Stream Suite
+- CI: Windows installer + plugin zip + source zip, plus template macOS/Linux packages
+- License: GPL-2.0-or-later, no telemetry, no paid tier
 
 ## Repo layout
 
 ```
-docs/                 product + architecture (this phase)
-profiles/             future game profiles (JSON + masks)
-src/                  OBS plugin sources (not started)
-data/locale/          OBS locale strings
-.github/              issue templates
+docs/          product docs
+src/           OBS plugin (not started; obs-plugintemplate)
+data/locale/   HUD Mask strings
+.github/       issue templates
 ```
 
-The C++ plugin will be bootstrapped from [obsproject/obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) when implementation starts. See GitHub issues.
+## Issues
 
-## GitHub issues
+[github.com/Milzstream/OBS-Vertical-Mask-Generator/issues](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues)
 
-Planning issues are on the private repo: [Milzstream/OBS-Vertical-Mask-Generator/issues](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues)
-
-| # | Phase | Issue |
-| --- | --- | --- |
-| [1](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/1) | — | Epic / product brief |
-| [2](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/2)–[6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6), [14](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/14) | MVP | Plugin loads; one source replaces clone+crop+PNG |
-| [7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7)–[9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) | v1 | Auto-hide when HUD is gone; profiles |
-| [10](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/10) | v1.5 | Mark HUD, plugin snaps a mask |
-| [11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11)–[12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) | v2 | Movement assist; ability-count tracking |
-| [13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) | research | Full-frame autodetect (not promised) |
-
-## Status
-
-Planning. No plugin binary yet. Do not install this repo into OBS.
+| Phase | Issues |
+| --- | --- |
+| Epic | [#1](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/1) |
+| MVP cut-out | [#2](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/2) bootstrap, [#3](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/3) sample/draw, [#4](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/4) + [#10](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/10) highlighter editor, [#5](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/5) Stream Suite, [#14](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/14) license |
+| v1 public | [#7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7) auto-hide, [#8](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/8) per-element hide |
+| After v1 | [#12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) mask that follows resize |
+| Research | [#15](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/15) prior art (this product is not already a plugin) |
+| Not doing | [#11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11) motion detect, [#6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6) Photoshop PNG import as the product, [#9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) game database, [#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) unsupervised full-frame find |

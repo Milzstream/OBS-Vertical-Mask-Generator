@@ -2,60 +2,85 @@
 
 ## The job to be done
 
-I stream horizontal and vertical at the same time with Aitum Stream Suite. The vertical canvas is a second OBS canvas. Gameplay is 16:9; the vertical frame is 9:16. HUD that lives in the corners of the horizontal image has to be extracted and re-composed onto the vertical scene so viewers can still see abilities, radar, health, and ammo.
+Horizontal games are 16:9. Vertical streams are 9:16. You cannot rotate the game to fill the phone; that is a bad viewer experience. The usual fix is:
 
-## What I do today
+1. Crop the world so it sits in the middle of the vertical canvas.
+2. **Cut out** the UI that the crop just hid (minimap, action bars, meters, abilities, …).
+3. Place those cut-outs in the leftover vertical space (top, bottom, corners).
+4. Scale them if needed.
 
-For each HUD piece, in OBS:
+That is a **per-element cut-out**, not a per-game library. NTE, WoW, Destiny, and whatever ships next year are all the same job.
 
-1. Source-clone the raw game scene.
-2. Crop the clone so it is just larger than the UI element.
-3. Add an Image Mask/Blend filter using a Photoshop PNG from `Vertical UI Masks\<Type>\<Game>.png`.
-4. Put that clone on the Aitum Vertical canvas and transform it into place.
+### WoW example (screenshot)
 
-Masks are white-on-black, feathered, authored at crop size (not full 2560×1440). Types already in use: Abilities, Radar, Health Bar, Level Bar, Weapons and Ammo. Games already in use: NTE, Stellar Blade, Destiny, Marathon, Alien Isolation.
+On the main 16:9 canvas the UI lives in the usual places (action bars along the bottom, Details meter as a dark box, minimap, player frames, chat). The vertical canvas is a center crop of the world plus:
 
-A worked crop example (NTE radar, 2560×1440 source): left 45, top 10, right 2180, bottom 1065 → a 335×366 crop, then a circular mask.
+- Damage meter cut out and moved to the **top-left**
+- Minimap cut out and moved to the **top-right**
+- Action bar cut out, **scaled** to the vertical width, and parked at the bottom
 
-This is documented with screenshots and files in [current-workflow.md](current-workflow.md).
+The plugin does **not** decide those positions. The user drags each cut-out around the canvas. The plugin only produces the cut-out, sizes the source to it, and later hides it when that UI is gone.
 
-## What goes wrong
+## What I do today (the thing to delete)
 
-Static masks do not know whether the HUD is actually there.
+For each UI piece:
 
-- **Menus / loading / fullscreen cinematics:** ability holes punch through to the world (or to a menu). The vertical overlay shows grass, a city, or a car instead of abilities.
-- **Vehicles in NTE:** abilities hide, minimap stays. The ability mask still punches three circles of road into the overlay.
-- **Character-specific HUD:** NTE ability count and layout are not universal. A 3-circle mask on a 4-slot character (or the reverse) leaves empty space or clips the wrong chrome.
-- **Setup cost:** every new game is Photoshop + crop math + OBS filter stacking. Playing one game well is already a lot of work; swapping games is worse.
+1. Source-clone the game.
+2. Crop filter, just larger than the element.
+3. Photoshop a white-on-black PNG.
+4. Image Mask/Blend.
+5. Transform on Aitum Vertical.
+6. Manually hide when loading screens, vehicles, `Alt+Z`, cutscenes, etc. remove that UI.
 
-The hope is not "prettier PNGs". It is that the overlay can **track whether the HUD is present**, **hide or reshape when it is not**, and **take less manual work to set up**.
+The `Vertical UI Masks` folders are a symptom of this. When the plugin works, those files should be unnecessary.
 
-## What we are actually building
+## What we are building
 
-An OBS plugin that adds a **HUD Mask** source.
+An OBS **source** (working name **HUD Mask** / **UI Cutout**).
 
-It is the vertical-canvas scene item for one HUD element. Internally it does the clone + crop + mask job, then adds a presence signal so the item can go fully transparent when that HUD is gone.
+It is a **general OBS cut-out source**. The reason it exists is Aitum Vertical HUD, but it is not Aitum-specific and not vertical-specific. Anyone can add it to any scene on any canvas and cut a piece out of any other source.
 
-It is **not** a Photoshop replacement on day one. Existing PNGs must keep working. Generation and tracking come after the source is real and hide/show is trustworthy.
+When you add it to a scene (for me: the vertical canvas):
 
-## Success criteria
+1. Pick any existing source to sample — scene, game capture, display capture, browser, …
+2. That dialog shows a **live view** of the sampled source.
+3. You **highlight** the UI you want to cut out (a highlighter / brush, rough is fine).
+4. The plugin **cleans up** the highlight so the mask hugs the element, then **crops** to that mask.
+5. You OK out. The source is now just that cut-out. Drag it, scale it, place it.
+6. While streaming, if that UI is not in the sampled source anymore (loading, vehicle, hidden HUD, cutscene), this source **hides itself** until the UI is back.
 
-The plugin is successful when, for a game I already mask by hand (NTE abilities + radar):
+One source instance = one highlighted element. Add three HUD Mask sources for meter + minimap + bars. Hide is per instance: the minimap can stay while the meter is gone.
 
-1. I can recreate the current look with one HUD Mask source per element, no source-clone + crop + image-mask stack.
-2. On the character-select / menu screen, ability holes do **not** show the background. Radar may still show if the radar is visible.
-3. In a vehicle, abilities hide and radar can stay.
-4. I can still drag and scale the item on the Aitum Vertical canvas.
-5. CPU/GPU cost is small enough that dual-canvas streaming does not hitch.
+There is **no internal database of games**. No NTE pack, no WoW pack, no growing list. Mechanisms only: highlight, clean, crop, sample, hide.
 
-If (2) and (3) are unreliable, the plugin is not better than the current PNGs.
+## Success (v1 = public / “it works”)
 
-## Non-goals (explicit)
+On **any** game, including ones we have never seen:
 
-- Reading game memory, injecting into the game, or anything that would trip anti-cheat (Destiny, etc.).
-- Official Aitum Stream Suite integration. There is no public API we should depend on. A normal OBS source on the vertical canvas is the integration.
-- A full-frame "find all UI in any game" detector as the first version. Automation should be **user-guided**: mark a region or move the camera, then let the plugin snap edges and build the mask.
-- A paid product. The plugin will be free to use (GPL-2.0-or-later, the license required to link libobs).
-- Replacing the Instagram / branding overlay (MilzOGram / Milzstream). That is a separate dock/browser graphic. This plugin only supplies the game HUD pixels that sit in or around it.
-- macOS / Linux as a v1 requirement.
-- Auto-building a complete vertical scene (gameplay crop, webcam, alerts, chat). HUD extraction only.
+1. Add HUD Mask on **any** scene/canvas → pick **any** source → highlight an element → get a usable cut-out.
+2. Place and scale it myself. The plugin does not auto-layout the scene. Intended layout is Aitum Vertical; technically it is just an OBS scene item.
+3. When that UI disappears, the cut-out does not punch a hole of world/loading-screen through the overlay.
+4. When the UI comes back, the cut-out comes back.
+5. I do not need Photoshop, crop filters, or source clones for this job.
+6. Dual-canvas streaming does not hitch.
+
+NTE and WoW are **test cases**, not the product.
+
+This is not a clone of Advanced Masks, Source Clone, or Advanced Scene Switcher. Those tools are how people approximate this today. See [prior-art.md](prior-art.md).
+
+## Non-goals
+
+- A catalog of games or shipped mask files.
+- Asking the user to walk around so we can find UI by motion. Killed; it is a bad setup experience.
+- Auto-placing cut-outs around the vertical canvas.
+- Building the rest of the vertical scene (world crop, cam, alerts, chat, branding bar).
+- Reading game memory or injecting into the game.
+- Aitum-private APIs. Stream Suite is the intended canvas, not a dependency. This is a normal OBS source.
+- A paid product. GPL-2.0-or-later, free to use, no telemetry.
+- Pixel-perfect Photoshop replacement on the first highlight. Cleanup should be *good*; the user can re-highlight or erase if it missed.
+
+## License and visibility
+
+- Free to use under GPL-2.0-or-later (required to link libobs).
+- Repo **private** until v1 is stable and actually usable.
+- Then **public**, so other streamers can install it. We are not counting on outside contributors.

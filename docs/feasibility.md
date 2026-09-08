@@ -1,149 +1,73 @@
 # Feasibility
 
-Honest split of what this plugin can do, what it might do with work, and what it should not promise.
+## Does a plugin like this already exist?
 
-## Can do (engineering, not research)
+**No.** See [prior-art.md](prior-art.md). Vertical HUD guides in 2025–2026 still teach Source Clone + a handmade PNG. Advanced Masks / Visual Crop / Advanced Scene Switcher cover *pieces* (shapes, rectangle crop, pattern-match hide). None of them is “highlight an element on any source → cut it out → hide when it is gone.”
 
-These are known OBS plugin patterns.
+That absence is not a sign that OBS cannot do it. Sampling + masking is solved. The missing piece is the editor + presence packaged as one source.
 
-| Capability | Why it is tractable |
+## Can do
+
+| Piece | Why |
 | --- | --- |
-| New source type that draws with alpha | Standard `obs_source_info` + `OBS_SOURCE_CUSTOM_DRAW` |
-| Sample another source into a texture | Same approach as Source Clone (`gs_texrender` + `obs_source_video_render`) |
-| Crop | Ortho / sprite UV of a sub-rect. Same numbers as the current Crop filter |
-| Apply a PNG mask with feathered edges | Image Mask/Blend already does this; we do it in our shader |
-| Scene item transform on the vertical canvas | Free: any source can be moved/scaled on any canvas |
-| Import existing `Vertical UI Masks` PNGs | Files are ordinary white-on-black masks |
-| Multiple instances | One source per HUD slot |
-| Windows + OBS 32 plugin package | obs-plugintemplate |
+| Sample any OBS source into a texture | Same pattern as Source Clone |
+| Custom Qt window with a live preview | Common for docks / “open editor” buttons; not stock properties widgets |
+| Highlighter (brush) on that preview | QPainter / overlay on a grabbed frame or a preview widget |
+| Crop + masked draw every frame | GPU shader, cheap |
+| Scene-item transform on any canvas | Free; any OBS source. Intended use is Aitum Vertical. |
+| Windows installer + zip + source zip via GitHub Actions | obs-plugintemplate already does this; macOS/Linux packages come along for the ride |
+| Persist mask on the source | OBS settings |
 
-**MVP is this list.** If we only shipped this, the plugin would already collapse a 3-filter stack into one source. That is useful, but it does **not** yet solve bleed-through.
+## Can do, with honesty
 
-## Can do (the actual differentiator), with caveats
+### Cleanup: rough highlight → tight mask
 
-### Presence detection / auto-hide
+This is the setup feature. It is **not** magic “detect all UI.” You already told it where to look.
 
-**Feasible** if we constrain it.
+Inside the painted region, hugging a high-contrast panel (WoW Details, a circular minimap, NTE ability circles) is realistic: seed from the stroke, snap to edges, feather.
 
-HUD chrome is usually:
+It will be worse on:
 
-- Screen-space (does not move with the camera)
-- High-contrast, repeated shapes (circles, bars, diamonds)
-- Present or absent as a set, not randomly flickering every frame
+- Translucent HUD
+- Action bars whose icons look like the world
+- UI that sits on a similar color (dark meter on a dark cave)
+- Soft glows / drop shadows
 
-A small template of the **chrome** (the ring of a minimap, the frames of ability slots — not the moving map/icons inside) compared against the current crop is a solved technique. Advanced Scene Switcher already does video-pattern conditions; we would do a tighter, per-source version.
+Escape hatch: erase, paint again, or accept “good enough on mobile.” Your WoW action bar is already not pixel-perfect and that is fine.
 
-What makes it work:
+We should **not** promise Photoshop-identical outlines on the first stroke.
 
-- User calibrates on a frame where the HUD is visible.
-- We compare a tiny ROI, not 4K.
-- Hysteresis + fade, so a one-frame ability animation does not hide the slot.
-- Independent per slot.
+### Hide when the UI is gone
 
-What will still fail sometimes:
+Feasible if we detect **the element**, not the artwork inside it.
 
-- HUD that **animates its chrome** (NTE ability slots pulsing, Destiny radar changing state).
-- HUD that **stays on screen during cinematics** (some games keep a minimap).
-- Lighting/color filters on the sampled source that were not there at calibration.
-- A crop so tight that the template is mostly the world, not the chrome.
+Works well when the whole widget is missing: loading screen, `Alt+Z`, NTE vehicle eating the ability bar, character select.
 
-This will need per-game tuning. It will not be 100%. It can be **good enough that I do not have to hotkey-hide abilities every time I enter a menu or a car**.
+Works poorly if we compare a screenshot of spell icons — those change every second. Signature should be “bar/panel still in this crop,” with hysteresis.
 
-### Character-specific ability layouts (NTE)
+Damage meters that **resize** in combat may clip or leave a gap. v1 can hide/show; resizing the mask is after v1.
 
-A **single static PNG** cannot cover every kit. Options that are feasible:
+Will never be 100%. Manual hide still exists.
 
-1. **Variants in a profile** (`NTE/abilities-3slot.png` vs `4slot`) and pick manually — easy, not magical.
-2. **Best-template match** among a few stored variants — feasible.
-3. **Detect the circles and generate the mask** — feasible for this specific shape (Hough / blob on a small crop), not as a general HUD solver.
+## Will not do
 
-(3) is the interesting one for NTE and should be a v2 experiment on **abilities only**, not the whole plugin's architecture.
-
-### Assisted mask generation (preferred automation path)
-
-Two user-guided methods are realistic. Full "scan the 16:9 frame and find every HUD" is not, as a first feature.
-
-**A. User marks, plugin finishes (high confidence)**
-
-1. Snapshot the sampled source.
-2. User roughly circles / boxes each HUD piece (does not need to be pixel-perfect).
-3. Plugin takes that smaller ROI and runs edge / flood / threshold to snap to the chrome.
-4. Feather the result to match the current Photoshop look.
-5. User accepts or nudges.
-
-This is the right default. The hard part of HUD extraction is *which* pixels are UI; a scribble removes that ambiguity. Edge detection on a 300×300 crop is cheap and reliable for circles, bars, and diamonds.
-
-**B. Request movement, then keep what did not move (medium confidence)**
-
-HUD is screen-space. The world is not.
-
-1. User clicks "calibrate".
-2. Plugin asks them to look around / walk / turn the camera for ~2 seconds.
-3. Pixels with **low variance** in that window are treated as UI; high-variance pixels are world.
-4. Connected components in the stable map become candidate slots.
-5. User confirms which blobs to keep (radar vs leftover static props).
-
-This can propose slots with almost no drawing. It fails on menus (everything is static), cutscenes, and translucent HUD over a still sky. Use it as a *helper to find boxes*, then run (A) inside each box.
-
-**C. Combine:** movement proposes regions → user taps the ones that are HUD → plugin edge-snaps a mask → presence template is captured from the same frame.
-
-Do not start with a general HUD AI. Start with (A), add (B) when (A) is boring.
-
-## Might do later (research, not a promise)
-
-### "Select a source and find all the UI"
-
-Fully automatic HUD discovery across arbitrary games is a research problem:
-
-- Menus are 100% UI; the detector would "find" the whole screen.
-- Loading screens and diegetic UI (holograms, in-world maps) confuse "static = HUD".
-- Some HUDs are translucent and sit on similar colors.
-- Games change HUD scale with settings / resolution / aspect.
-
-A **region-limited** version ("in this box, find the stable shape") is much more realistic than "scan the whole 16:9 frame and propose every slot".
-
-Do not schedule automatic full-frame discovery as a feature until presence + assisted generation work on the games we already mask.
-
-### Live mask morphing every frame
-
-Reshaping the mask 60 times a second to follow an animating health bar is expensive and easy to get wrong (the bar fill is supposed to be inside the mask; the mask should follow chrome, not fill). Prefer: hide, switch variant, or regenerate on a slow timer when circle *count* changes.
-
-## Cannot / will not do
-
-| Idea | Why not |
+| Idea | Status |
 | --- | --- |
-| Read game memory for "in menu" / "in vehicle" | Anti-cheat (especially Destiny). Also game-specific and brittle. |
-| Inject a ReShade-style overlay into the game | Same risk; also not how OBS compositing should work |
-| Depend on a private Aitum Stream Suite API | No supported public API for this; would break on their releases |
-| Guarantee zero false hides | Presence is statistical. We ship hysteresis and a manual override |
-| Build the entire vertical scene (gameplay crop, cam, alerts, chat) | Out of scope. Other docks already exist for that |
-| Replace the branding overlay | Separate graphic |
-| Support every capture method's color space perfectly on day one | HDR / canvas color space already bites Source Clone; we test SDR first |
+| Walk around while we detect UI from motion | **Killed.** Bad setup UX; menus break it anyway. |
+| In-plugin database of every game | **Killed.** Highlight is the mechanism. |
+| Auto-place cut-outs on the vertical canvas | **Killed.** User drags. |
+| Unsupervised full-frame HUD finder | Research at most; not v1. |
+| Game memory / injection | Never. |
+| Aitum-private API | Never. |
 
-## Performance budget (target)
+## Performance
 
-Dual-canvas streaming is already heavy. Budget for *all* HUD Mask instances combined:
+All HUD Mask instances together:
 
-- GPU: a few extra texrenders of crops, not extra full-frame copies of the game.
-- CPU: presence at ≤10 Hz, crop downscaled, off the graphics thread.
-- No OpenCV on the render thread. If we use a CV library, it is for the worker and optional.
+- GPU: texrender of the sampled source (or a shared cache later) + small masked blit
+- CPU: presence on the **crop**, downscaled, ≤10 Hz
+- Cleanup: only in the editor, on a snapshot or paused live frame
 
-If presence cannot meet that, presence stays off and the source still works as a static masked crop.
+## Platforms
 
-## Compatibility notes
-
-- **Source Clone** remains useful for other things; HUD Mask should not require it.
-- **Stream Suite extra canvases:** must be in the test matrix. Sampling across canvases is the sharp edge.
-- **Color space:** start with SDR game capture. HDR passthrough is a known footgun.
-- **Existing PNGs:** must look the same as Image Mask/Blend with "Alpha Mask Blend" / white-on-black. Match that convention exactly so current art is reusable.
-
-## Recommended stance
-
-Build in this order, and only promote a layer when the one under it is boringly reliable:
-
-1. Source + crop + PNG mask (parity with today).
-2. Presence hide/show on NTE abilities + radar (the screenshots we have).
-3. Calibration UI so I am not typing crop insets.
-4. Assisted generation + circle-count tracking as experiments on NTE abilities.
-
-Do not start with a general HUD AI.
+OBS plugins can be cross-platform. We **build** all three via the template. We **test** Windows + OBS 32 + Stream Suite because that is the machine this is for. If a macOS/Linux artifact is broken at v1, that is a bug to file, not a release blocker.

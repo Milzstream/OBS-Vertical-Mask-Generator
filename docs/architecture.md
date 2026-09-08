@@ -2,158 +2,108 @@
 
 ## Form factor
 
-**OBS plugin (C++), new input source**, not a filter and not a standalone app.
+**OBS plugin (C++/Qt), new input source.** One instance = one cut-out.
 
 | Choice | Why |
 | --- | --- |
-| Source, not filter | The vertical canvas needs its own scene item that can be moved/scaled. A filter still needs a clone to hang off. A source *is* that item. |
-| Sample another source | Same idea as Exeldro Source Clone: `obs_source_video_render` the chosen source into a `gs_texrender`, then crop and mask. |
-| No Aitum API | Stream Suite's vertical canvas is a normal OBS canvas. A registered `obs_source_info` can be added there. Depending on Stream Suite internals would break on their updates. |
-| One instance per HUD element | Independent show/hide (NTE abilities vs radar). Matches how the scene is already built. |
-| Windows / OBS 32 first | That is the Stream Suite environment in use. |
+| Source, not filter | Needs its own scene item to drag and scale on any canvas. A filter still needs a clone to hang off. |
+| Sample any source | Game capture, scene, display capture, browser — same OBS API. |
+| No game database | Settings live on the source, which already persists in the OBS scene collection. |
+| Custom Qt editor | Stock `obs_properties` cannot host a live video + highlighter. The add-source / properties flow opens our cutout window. |
+| Windows dogfood, multi-platform build | OBS plugins from obs-plugintemplate already CI to Win installer + zip, macOS pkg, Linux deb, source archive. We test Windows first. |
 
-A filter can be added later if someone wants to mask an existing clone. It is not required for the first useful version.
+GPL-2.0-or-later.
 
-## Plugin bootstrap
-
-Implementation starts from [obsproject/obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate):
-
-- CMake + `buildspec.json` for OBS 32
-- GitHub Actions for Windows (macOS/Linux CI optional, not a v1 ship gate)
-- Module id something like `vertical-hud-mask`
-- Display name **HUD Mask**
-
-GPL-2.0-or-later, same as libobs.
-
-## Runtime pieces
+## Add-source flow (the product)
 
 ```
-┌─────────────────────────────────────────────┐
-│ HUD Mask source (on Aitum Vertical scene)   │
-│                                             │
-│  1. Resolve target source by name           │
-│  2. Render it to a texrender (GPU)          │
-│  3. Draw the crop rect through a mask       │
-│     shader (PNG or generated texture)       │
-│  4. Multiply RGB by presence alpha          │
-│  5. Output as this source's video           │
-└─────────────────────────────────────────────┘
-                 ▲
-                 │ throttled GPU→CPU readback of the crop only
-                 │
-┌─────────────────────────────────────────────┐
-│ Presence worker (not on the graphics hot    │
-│ path)                                       │
-│  - probe / template score at ~4–10 Hz       │
-│  - hysteresis + fade                        │
-└─────────────────────────────────────────────┘
+Add Source → HUD Mask → name it
+        ↓
+┌─────────────────────────────────────────┐
+│  Sample: [ Game Capture          ▼ ]    │
+│                                         │
+│  ┌─────────────────────────────────┐    │
+│  │  live view of sampled source    │    │
+│  │  user highlighter over the UI   │    │
+│  └─────────────────────────────────┘    │
+│  tools: highlight · erase · reset       │
+│  [ Cleanup ]  preview of tight mask     │
+│                           [ OK ]        │
+└─────────────────────────────────────────┘
+        ↓
+source size = bounding box of the cleaned mask
+scene item appears on the canvas → user transforms it
 ```
 
-### Render path (every frame, GPU, cheap)
+OBS will still show the normal properties sheet. That sheet is: sampled-source dropdown, button **Edit cutout…** (reopens this window), maybe feather / invert. The highlighter is not a row of spinboxes.
 
-1. If the target source is missing, draw nothing.
-2. Texrender the target (optionally without its filters — should be a property, default "with filters" off for a raw game capture).
-3. Set ortho to the crop rectangle.
-4. Sample the mask texture; `rgb = game; a = mask.r * presence`.
-5. Feather is either baked into the PNG (current art) or a shader blur of the mask.
+## Runtime
 
-Do **not** read the full 4K frame back to the CPU on the graphics thread.
+```
+Every frame (GPU, cheap)
+  sample target source into a texrender
+  draw the crop through the cleaned mask
+  multiply alpha by presence (0..1)
 
-### Presence path (few times per second, small ROI)
-
-Read back only the cropped region, possibly downscaled (e.g. 64–128 px on the long side).
-
-v1 modes, in order of implementation:
-
-1. **Manual** — user hides the source. Same as today.
-2. **Probe** — N sample points chosen during calibration (HUD chrome colors / edges). Score vs a stored reference.
-3. **Template** — small grayscale snippet of the HUD chrome (not the world-filled interior of a minimap). Normalized correlation or mean absolute error.
-
-Hysteresis: require several consecutive low scores before hide, several high scores before show. Fade opacity over ~150–300 ms so it does not pop.
-
-Presence is **per source instance**. Abilities can hide while radar stays.
-
-## Data model
-
-A **profile** is a named game (or game + character) with one or more **slots**.
-
-```json
-{
-  "schemaVersion": 1,
-  "game": "NTE",
-  "variant": "default",
-  "sourceHint": "Game Capture",
-  "canvas": { "width": 2560, "height": 1440 },
-  "slots": [
-    {
-      "id": "radar",
-      "label": "Radar",
-      "crop": { "left": 45, "top": 10, "right": 2180, "bottom": 1065 },
-      "mask": { "type": "png", "file": "radar.png" },
-      "presence": {
-        "mode": "template",
-        "hideThreshold": 0.35,
-        "showThreshold": 0.55,
-        "holdMs": 250
-      }
-    }
-  ]
-}
+Few times per second (small ROI, not full 4K, off the graphics thread)
+  score: “is this UI element still here?”
+  hysteresis → fade presence
 ```
 
-`crop` uses OBS-style insets from each edge of the **sampled source**, matching the Creating Masks.png notes.
+Presence must ignore **contents**:
 
-OBS scene collection stores the live source settings (target source name, crop, mask path, presence params). Profiles are a convenience pack that can stamp those settings onto new HUD Mask sources.
+| Element | Interior changes | What we should match |
+| --- | --- | --- |
+| WoW action bar | Spell icons, cooldowns | Slot chrome / bar shape |
+| WoW Details meter | Numbers, bar fill, height | Dark window, roughly |
+| Minimap | Terrain, pings | Frame / circle, not the map |
+| NTE abilities | Icons, which slots exist | Slot frames; hide if the group is gone |
 
-Schema lives in [`profiles/schema.json`](../profiles/schema.json).
+If we template-match the highlighted pixels naively, the action bar will flicker every time a cooldown pulses. The stored signature should be biased toward stable chrome, or a loose match on the masked region as a whole.
 
-## UI
+## Highlight cleanup (setup, not every frame)
 
-### v1 — source properties
+User stroke = “this is the UI” seed. Plugin, inside a dilated bounding box of the stroke:
 
-- Source picker (existing sources)
-- Crop left/top/right/bottom
-- Mask PNG path (with a preview)
-- Feather
-- Presence enable + sensitivity
-- "Capture reference" button (stores the template / probes from the current crop)
+1. Treat the stroke as foreground, unpainted as likely background.
+2. GrabCut / watershed / edge snap — pick one spike and keep it if it hugs chrome.
+3. Morphology (close holes, drop specks) + feather.
+4. Crop = bounding box of remaining alpha.
 
-### v1.5 — calibration dock (optional, high value)
+“Perfectly match” is the aim. First versions will miss translucent edges and busy action bars. **Erase and paint again** is the escape hatch, not a game-specific tweak.
 
-- Snapshot of the sampled source
-- Roughly **circle or box** HUD pieces (does not need to be pixel-perfect)
-- Plugin edge-snaps the mark into a crop + mask
-- Optional **“look around for 2 seconds”** pass that highlights stable pixels as HUD candidates
-- Preview the masked result
-- Tune presence on a live score meter
+Cleanup runs when the user asks (button or pause after a stroke), not at 60 fps.
 
-The dock is not required to prove the source works. It is required to make setup faster than Photoshop + crop math.
+## Persistence
 
-## Interaction with Aitum Stream Suite
+Saved on the source (scene collection JSON):
 
-- User adds **HUD Mask** on the vertical canvas.
-- Target source is the horizontal game capture / scene.
-- Source Clone is **not** required once HUD Mask can sample the original.
-- Scene item transform, visibility, blend, and hotkeys are stock OBS.
-- We do not hook Stream Suite docks, outputs, or scene linking.
+- Target source name/uuid
+- Crop rect (computed)
+- Mask texture (PNG in the source settings, or a file next to the scene collection)
+- Presence signature (from the cleaned crop at OK time)
+- Feather, invert, presence on/off
 
-Risk to test early: sampling a source that lives on another canvas (Stream Suite extra canvas). Exeldro Source Clone had bugs here and later fixed "cloning sources from extra canvas". Our sampling code should follow that pattern and be tested on Stream Suite, not only vanilla OBS.
+No `profiles/` game packs. That folder in this repo is leftover planning and can go away.
+
+## Stream Suite and everywhere else
+
+HUD Mask is a normal OBS source. It can sit on the main canvas, a vertical canvas, or any extra canvas. The intended use is: add it on Aitum Vertical, point it at a main-canvas game capture.
+
+We do not link Stream Suite. Extra-canvas sampling is still the sharp test (Source Clone has burned itself on this before), but the plugin must also work in vanilla OBS with a single canvas.
+
+## Packaging (CI)
+
+obs-plugintemplate default artifacts, which match what you see on other plugins:
+
+- Windows: installer `.exe` that puts the plugin in the OBS plugins folder, plus a zip of the same files
+- Source: `.zip` / `.tar.xz` of the tagged tree
+- macOS `.pkg` and Linux `.deb` from the same CI, untested until we care
+
+v1 public release = a GitHub Release with those files and a short install note.
 
 ## Safety
 
-- No process injection, no reading another process's memory.
-- No network.
-- Analysis is optional and off by default until calibrated, so a mis-tuned detector cannot flicker a stream on first add.
-- Mask PNGs are local files.
-
-## Build / repo split
-
-| Path | Role |
-| --- | --- |
-| `src/` | Plugin C++ (not started) |
-| `data/` | Locale, default effects |
-| `profiles/` | Example / user game packs |
-| `docs/` | Product docs |
-| `.github/` | Issues, later CI from the plugin template |
-
-Personal mask PNGs and PSDs stay in OneDrive, not in git.
+- No process injection, no game memory, no network, no telemetry.
+- Presence off until a cutout exists, so a new source does not flicker.
+- Manual visibility still overrides.
