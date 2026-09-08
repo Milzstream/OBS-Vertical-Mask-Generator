@@ -8,6 +8,7 @@
 !/data
 !/docs
 !/src
+!/tests
 !/profiles
 !.clang-format
 !.gersemirc
@@ -20,6 +21,7 @@
 
 # Docs and planning
 !/docs/**
+!/tests/**
 !/profiles/**
 !/.github/**
 
