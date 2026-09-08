@@ -352,31 +352,21 @@ public:
 		bool any = false;
 
 		for (int lab = 1; lab <= nlab; lab++) {
-			int count = 0, bx0 = w, by0 = h, bx1 = 0, by1 = 0, perim = 0;
-			double sx = 0, sy = 0;
-			std::vector<int> radii;
+			int count = 0, bx0 = w, by0 = h, bx1 = 0, by1 = 0;
 			for (int y = 0; y < h; y++) {
 				for (int x = 0; x < w; x++) {
 					const int i = y * w + x;
 					if (label[i] != lab)
 						continue;
 					count++;
-					sx += x;
-					sy += y;
 					bx0 = std::min(bx0, x);
 					by0 = std::min(by0, y);
 					bx1 = std::max(bx1, x);
 					by1 = std::max(by1, y);
-					if (x == 0 || y == 0 || x == w - 1 || y == h - 1 || !label[i - 1] ||
-					    !label[i + 1] || !label[i - w] || !label[i + w] || label[i - 1] != lab ||
-					    label[i + 1] != lab || label[i - w] != lab || label[i + w] != lab)
-						perim++;
 				}
 			}
 			if (count < 40)
 				continue;
-			sx /= count;
-			sy /= count;
 			const int bw = bx1 - bx0 + 1;
 			const int bh = by1 - by0 + 1;
 			const double aspect = static_cast<double>(std::min(bw, bh)) / std::max(bw, bh);
@@ -390,28 +380,21 @@ public:
 			lp.setBrush(Qt::white);
 
 			if (roundish) {
-				for (int y = by0; y <= by1; y++) {
-					for (int x = bx0; x <= bx1; x++) {
-						if (label[y * w + x] != lab)
-							continue;
-						radii.push_back(static_cast<int>(std::lround(
-							std::hypot(x - sx, y - sy))));
-					}
-				}
-				std::nth_element(radii.begin(), radii.begin() + radii.size() / 2, radii.end());
-				const int rMed = std::max(6, radii[radii.size() / 2]);
-				int bestR = rMed;
-				int bestS = -1;
-				const int r0 = std::max(6, static_cast<int>(rMed * 0.88));
-				const int r1 = static_cast<int>(rMed * 1.08);
-				for (int r = r0; r <= r1; r++) {
-					const int s = ringScore(sx, sy, r);
-					if (s > bestS) {
+				/* Size comes from the paint, not an inner HUD ring. */
+				const double cx = (bx0 + bx1) * 0.5;
+				const double cy = (by0 + by1) * 0.5;
+				int rOuter = std::max(6, std::min(bw, bh) / 2);
+				int bestR = rOuter;
+				int bestS = ringScore(cx, cy, rOuter);
+				const int r1 = rOuter + 3;
+				for (int r = rOuter; r <= r1; r++) {
+					const int s = ringScore(cx, cy, r);
+					if (s >= bestS) {
 						bestS = s;
 						bestR = r;
 					}
 				}
-				lp.drawEllipse(QPointF(sx, sy), bestR, bestR);
+				lp.drawEllipse(QPointF(cx, cy), bestR, bestR);
 			} else {
 				const int rad = 4;
 				for (int y = std::max(0, by0 - rad); y <= std::min(h - 1, by1 + rad); y++) {
