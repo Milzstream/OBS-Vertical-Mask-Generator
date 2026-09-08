@@ -32,13 +32,19 @@ Per-island hide is feasible when:
 - Each blob has some stable chrome
 - Scoring is a small ROI at a few Hz, not 4K 60 fps
 
-It is **not** guaranteed for every HUD. Fallback: one HUD Mask per blob (same as today’s “three clones”). Highlighting the whole bar at once is the better UX when islands work.
+It is **not** guaranteed for every HUD. Fallback: **Split into N sources** (one click after cleanup), not highlighting the bar three times by hand.
 
 Auto-hide will never be 100%. That is why it is a checkbox. With it off, the plugin still replaces Photoshop + crop filters.
 
+Presence is **one shared cycle** for all visible, auto-hide-on masks. Minimap + abilities both sampling the game are scored from the same downsample. Cost must not grow linearly with mask count.
+
+## Split into N sources (setup)
+
+If cleanup finds 3 blobs, offer to explode that HUD Mask into 3 sources. Cheap, no runtime cost, and each piece can hide or be transformed on its own. Better UX than auto-resize for “this kit only has two circles.”
+
 ## Auto-resize (later, optional)
 
-If a circle grows to match its neighbors, or a meter gets taller in combat, updating that island’s mask is possible in principle (search a padded box for a similar blob). It is easy to get wrong (layout jump, grabbing world pixels) and is **not** the v1 bar. Re-opening the editor, or using separate sources, is the supported way to handle a layout that changed size.
+If a circle grows to match its neighbors, or a meter gets taller in combat, updating that island’s mask is possible in principle (search a padded box for a similar blob). It is easy to get wrong (layout jump, grabbing world pixels) and is **not** the v1 bar. Re-opening the editor, or splitting into separate sources, is the supported way to handle a layout that changed size.
 
 ## Will not do
 
@@ -54,7 +60,7 @@ If a circle grows to match its neighbors, or a meter gets taller in combat, upda
 ## Performance
 
 - Auto-hide off: extra GPU blit of a small crop. Should be cheaper than the clone+mask stack it replaces.
-- Auto-hide on: ≤10 Hz, per-island downscaled crops, worker thread. Hard cap: no full-frame readback, nothing on the graphics hot path.
+- Auto-hide on: one plugin-wide cycle, ≤10 Hz. GPU scales with unique **visible** sampled targets, not with how many HUD Masks exist. Hidden / other-scene items are not in the cycle.
 - Must not add a noticeable hitch to dual-canvas streaming or to the game.
 
 ## Platforms

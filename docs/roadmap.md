@@ -14,8 +14,9 @@ Highlight → cleanup → crop → placeable source. Auto-hide exists as a check
 - Auto-hide checkbox, **off by default**
 - Whole-instance hide when the element is gone
 - Per-island hide when the cleaned mask has separate blobs
+- **One shared presence cycle** for all visible auto-hide masks (grouped by sampled source)
+- **Split into N sources** when cleanup finds multiple islands
 - Hysteresis + fade; signatures ignore changing fill
-- Document the fallback: one source per blob if islands misbehave
 
 Public release when cut-out is reliable and auto-hide is safe to leave off (or on) without wrecking a stream.
 
@@ -39,7 +40,7 @@ Public release when cut-out is reliable and auto-hide is safe to leave off (or o
 | --- | --- |
 | Epic | [#1](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/1) |
 | MVP | [#2](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/2) [#3](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/3) [#4](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/4) [#10](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/10) [#5](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/5) [#14](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/14) |
-| v1 | [#7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7) [#8](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/8) |
+| v1 | [#7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7) [#8](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/8) [#16](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/16) |
 | Later | [#12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) |
 | Research | [#15](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/15) |
 | Closed | [#6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6) [#9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) [#11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11) [#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) |

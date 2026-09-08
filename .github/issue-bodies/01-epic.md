@@ -20,6 +20,10 @@ Cut-out always works. **Auto-hide is a checkbox, off by default.**
 
 When on: islands (disconnected blobs in one mask) hide independently if that blob is gone. Whole source hides if every island is gone. Detect the **element**, not its contents (icons/numbers changing should not hide a bar).
 
+All visible auto-hide masks share **one presence cycle**, grouped by sampled source. Hidden items are skipped.
+
+If cleanup finds several blobs, **Split into N sources** creates one HUD Mask per island in a click.
+
 If islands misbehave, use one HUD Mask per blob. Auto-resize of a blob that grew is after v1.
 
 ## Not doing

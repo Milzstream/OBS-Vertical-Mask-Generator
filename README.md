@@ -17,7 +17,7 @@ It is a normal OBS source. The usual use is **vertical streaming**: crop the 16:
 
 No Photoshop masks, no crop-filter stack, no per-game database.
 
-A highlight that covers several separate blobs (for example three ability circles) is stored as **islands**. Auto-hide can drop one island and leave the others. If that is not reliable for a given HUD, add one HUD Mask per blob instead.
+A highlight that covers several separate blobs (for example three ability circles) is stored as **islands**. Auto-hide can drop one island and leave the others. The editor can also **split** those islands into separate HUD Mask sources in one click. Auto-hide, when enabled, runs as **one check cycle** for all visible masks that share a sampled source — it does not add a timer per mask.
 
 ## Docs
 

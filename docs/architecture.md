@@ -32,7 +32,7 @@ source size = bounding box of the cleaned mask
 user transforms the scene item
 ```
 
-The normal properties sheet is small: sampled source, **Edit cutout…**, feather, invert, **Auto-hide** checkbox.
+The normal properties sheet is small: sampled source, **Edit cutout…**, feather, invert, **Auto-hide** checkbox. If cleanup found more than one island, **Split into N sources**.
 
 ## Mask islands
 
@@ -46,23 +46,40 @@ Each island stores:
 
 The scene item’s size stays the **full crop**. Hidden islands become transparent holes; the item does not jump on the canvas.
 
-If cleanup merges blobs that should stay separate, the user either tightens the highlight or uses one HUD Mask per blob.
+If cleanup merges blobs that should stay separate, the user either tightens the highlight or uses **Split into N sources**.
+
+### Split into N sources
+
+Setup-time only. If the cleaned mask has 3 islands, the editor can offer one click: create three HUD Mask sources (same sampled target, one island each), place them so the composite still lines up, remove the original combined source. Each can then hide, move, and scale on its own without highlighting the bar three times.
+
+That is the preferred way to get independent control. It costs nothing at stream time.
 
 ## Runtime
 
 ```
-Every frame (GPU)
+Every frame (GPU), per visible HUD Mask
   sample target into a texrender
   draw crop through the current mask
   (optional) zero alpha on islands scored absent
-
-If auto-hide is on, a few times per second
-  (small ROI per island, downscaled, off the graphics thread)
-  score each island
-  hysteresis + fade
 ```
 
-Auto-hide **off**: no analysis, no extra CPU. The source is a static cut-out.
+### Shared presence cycle (not per source)
+
+Auto-hide is **one plugin-wide pass**, not a timer on each mask.
+
+```
+Every ~100–200 ms, if any visible HUD Mask has auto-hide on:
+
+  1. Collect instances that are
+     - auto-hide enabled
+     - visible as a scene item on an active canvas
+  2. Group them by sampled target (minimap + abilities on Game Capture = one group)
+  3. For each unique target: one downsample / readback
+  4. Score every island in that group from the same buffer
+  5. Push present/absent back to each instance (hysteresis + fade)
+```
+
+Hidden items, inactive scenes, and auto-hide-off sources are skipped. Adding a fifth mask that samples the same game capture should not add another GPU readback.
 
 Presence matches the **slot/frame**, not icons, numbers, or minimap terrain.
 
@@ -89,11 +106,12 @@ On the source:
 
 ## Performance budget
 
-All HUD Mask instances combined should cost less than an extra game capture:
+All HUD Mask instances combined should cost less than an extra game capture.
 
-- GPU: sample + small masked blit
-- CPU: only if auto-hide is on; per-island crops, ≤10 Hz, never full-frame
-- Cleanup: editor only
+- **Draw:** GPU sample + small masked blit per visible instance (same order as today’s clones).
+- **Auto-hide off:** no analysis.
+- **Auto-hide on:** one cycle for the whole plugin. GPU cost scales with **unique sampled targets that are visible**, not with mask count. CPU scores small ROIs from that buffer. ≤10 Hz. Nothing on the graphics hot path. No extra full-res 4K readback per mask.
+- **Cleanup / split:** editor only.
 
 If presence cannot stay in that budget, it stays off and the cut-out still works.
 

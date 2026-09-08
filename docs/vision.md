@@ -27,7 +27,7 @@ It is **not** Aitum-specific and **not** vertical-specific. Aitum Vertical is th
 4. Cleanup hugs the chrome and crops to the mask.
 5. The user drags and scales the item.
 
-One instance can cover several disconnected blobs (islands) from a single highlight. There is no in-plugin list of games.
+One instance can cover several disconnected blobs (islands) from a single highlight. If those blobs should be independent scene items, **Split into N sources** does that in one click. There is no in-plugin list of games.
 
 ## Runtime
 
@@ -37,8 +37,8 @@ When auto-hide is on:
 
 - Presence is about the **element**, not the artwork inside it (cooldowns and meter numbers should not hide a bar).
 - **Islands** in one mask can hide independently (one of three ability circles gone → only that circle drops).
-- If island detection is a poor fit, the fallback is one HUD Mask per blob.
-- If a layout changes size enough that the mask is wrong, the user re-opens the editor (or uses separate instances). Automatic resize of islands is a later experiment, not the v1 bar.
+- All visible auto-hide masks are scored in **one shared cycle** (minimap and abilities together, not a timer per source). Hidden items are skipped.
+- If islands are a poor fit, **Split into N sources** from the editor. Automatic resize of islands is a later experiment, not the v1 bar.
 
 Manual scene-item visibility always still works.
 
