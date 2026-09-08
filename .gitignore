@@ -1,34 +1,37 @@
-# Build
-build/
-build_*/
-out/
-cmake-build-*/
-.vs/
-.vscode/
-.idea/
-*.user
-*.suo
-CMakeUserPresets.json
+# Exclude everything
+/*
 
-# OBS / compiler artifacts
-*.obj
-*.pdb
-*.ilk
-*.exp
-*.lib
-*.dll
-*.so
-*.dylib
-*.exe
-*.exp
+# Project files
+!/.github
+!/build-aux
+!/cmake
+!/data
+!/docs
+!/src
+!/profiles
+!.clang-format
+!.gersemirc
+!.gitignore
+!buildspec.json
+!CMakeLists.txt
+!CMakePresets.json
+!LICENSE
+!README.md
 
-# Personal mask assets (keep examples out of git)
+# Docs and planning
+!/docs/**
+!/profiles/**
+!/.github/**
+
+# Exclude lock files
+*.lock.json
+
+# Exclude macOS legacy resource forks
+.DS_Store
+
+# Exclude CMake build number cache
+/cmake/.CMakeBuildNumber
+
+# Personal mask assets
 /profiles/**/*.png
 /profiles/**/*.psd
-!/profiles/README.md
-!/profiles/schema.json
-
-# OS
-Thumbs.db
-Desktop.ini
-.DS_Store

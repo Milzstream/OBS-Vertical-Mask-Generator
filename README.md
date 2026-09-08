@@ -38,4 +38,24 @@ A highlight that covers several separate blobs (for example three ability circle
 
 ## Status
 
-Planning. `src/` is empty until implementation starts from [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate). Issues: [github.com/Milzstream/OBS-Vertical-Mask-Generator/issues](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues).
+Early plugin: **HUD Mask** can be added as a source, sample another source, crop it, and apply an optional PNG mask. The highlighter editor and auto-hide are not in yet.
+
+Issues: [github.com/Milzstream/OBS-Vertical-Mask-Generator/issues](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues).
+
+## Build (Windows)
+
+Requires Visual Studio 2022, CMake 3.28+, and a network connection the first time (OBS SDK is downloaded).
+
+```
+cmake --preset windows-x64
+cmake --build --preset windows-x64
+```
+
+Copy into OBS from an elevated prompt (close OBS first):
+
+- `build_x64/rundir/RelWithDebInfo/vertical-hud-mask.dll` → `C:\Program Files\obs-studio\obs-plugins\64bit\`
+- `build_x64/rundir/RelWithDebInfo/vertical-hud-mask\` → `C:\Program Files\obs-studio\data\obs-plugins\vertical-hud-mask\`
+
+Then **Add Source → HUD Mask**, pick a source, set crop insets, optionally a white-on-black PNG.
+
+CI on `main` and on version tags produces a Windows installer, plugin zip, and source archive (plus template macOS/Linux packages).
