@@ -1,0 +1,48 @@
+name: Feature
+description: A piece of the HUD Mask plugin we intend to build
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - MVP
+        - v1
+        - v1.5
+        - v2
+        - later / research
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is painful in the current OBS + Photoshop workflow?
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What does done look like in a live Aitum Vertical scene?
+    validations:
+      required: true
+  - type: textarea
+    id: in-scope
+    attributes:
+      label: In scope
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Testable checks, preferably against NTE or an existing mask.
+    validations:
+      required: true

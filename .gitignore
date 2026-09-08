@@ -1,0 +1,34 @@
+# Build
+build/
+build_*/
+out/
+cmake-build-*/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# OBS / compiler artifacts
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.exp
+
+# Personal mask assets (keep examples out of git)
+/profiles/**/*.png
+/profiles/**/*.psd
+!/profiles/README.md
+!/profiles/schema.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

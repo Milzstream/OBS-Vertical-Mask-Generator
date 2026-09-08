@@ -1,0 +1,24 @@
+name: Research
+description: Something we are not promising yet — spike, feasibility, or explicit non-goal
+title: "[Research] "
+labels: ["type:research"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: What a successful spike produces
+      description: Notes, a prototype, or a decision to wontfix — not a shippable feature by default.
+    validations:
+      required: true

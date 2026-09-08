@@ -1,0 +1,14 @@
+This project is free software.
+
+It is licensed under the GNU General Public License v2.0 or later,
+the same family of license used by OBS Studio and most OBS plugins
+that link against libobs. You may use, study, share, and modify it
+at no cost, including for streaming and for other plugins, under
+the terms of that license.
+
+Full license text:
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+OBS Studio is a registered trademark of the OBS Project.
+Aitum, Aitum Vertical, and Aitum Stream Suite are trademarks of
+their respective owners. This project is not affiliated with Aitum.
