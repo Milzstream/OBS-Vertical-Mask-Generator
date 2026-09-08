@@ -10,9 +10,13 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include "hud-mask.hpp"
 #include "cutout-editor.hpp"
+#include "mask-process.hpp"
 
 #include <obs-module.h>
+#include <graphics/graphics.h>
 #include <plugin-support.h>
+
+#include <QImage>
 
 #include <algorithm>
 #include <cstring>
@@ -29,6 +33,8 @@ constexpr const char *k_crop_top = "crop_top";
 constexpr const char *k_crop_right = "crop_right";
 constexpr const char *k_crop_bottom = "crop_bottom";
 constexpr const char *k_mask_path = "mask_path";
+constexpr const char *k_expand = "expand";
+constexpr const char *k_feather = "feather";
 constexpr const char *k_auto_hide = "auto_hide";
 
 gs_effect_t *mask_effect = nullptr;
@@ -107,13 +113,15 @@ void set_target(hud_mask *ctx, const char *name)
 
 void free_mask_texture(hud_mask *ctx)
 {
-	if (!ctx->mask_loaded)
+	if (!ctx->mask_tex && !ctx->mask_loaded)
 		return;
 	obs_enter_graphics();
-	gs_image_file_free(&ctx->mask_image);
+	if (ctx->mask_tex) {
+		gs_texture_destroy(ctx->mask_tex);
+		ctx->mask_tex = nullptr;
+	}
 	obs_leave_graphics();
 	ctx->mask_loaded = false;
-	memset(&ctx->mask_image, 0, sizeof(ctx->mask_image));
 }
 
 void load_mask_texture(hud_mask *ctx, const char *path)
@@ -123,19 +131,34 @@ void load_mask_texture(hud_mask *ctx, const char *path)
 	if (ctx->mask_path.empty())
 		return;
 
-	gs_image_file_init(&ctx->mask_image, ctx->mask_path.c_str());
-	obs_enter_graphics();
-	gs_image_file_init_texture(&ctx->mask_image);
-	obs_leave_graphics();
-
-	if (!ctx->mask_image.loaded || !ctx->mask_image.texture) {
+	QImage img(QString::fromUtf8(ctx->mask_path.c_str()));
+	if (img.isNull()) {
 		obs_log(LOG_WARNING, "failed to load mask '%s'", ctx->mask_path.c_str());
-		gs_image_file_free(&ctx->mask_image);
-		memset(&ctx->mask_image, 0, sizeof(ctx->mask_image));
 		return;
 	}
+	img = img.convertToFormat(QImage::Format_Grayscale8);
+	const int w = img.width();
+	const int h = img.height();
+	if (w < 1 || h < 1)
+		return;
 
-	ctx->mask_loaded = true;
+	std::vector<uint8_t> gray(static_cast<size_t>(w) * h);
+	for (int y = 0; y < h; y++)
+		memcpy(gray.data() + static_cast<size_t>(y) * w, img.constScanLine(y), static_cast<size_t>(w));
+
+	if (ctx->expand != 0 || ctx->feather > 0) {
+		mask_binarize(gray);
+		if (ctx->expand != 0)
+			mask_expand(gray, w, h, ctx->expand);
+		if (ctx->feather > 0)
+			mask_feather(gray, w, h, ctx->feather);
+	}
+
+	const uint8_t *slices[1] = {gray.data()};
+	obs_enter_graphics();
+	ctx->mask_tex = gs_texture_create(static_cast<uint32_t>(w), static_cast<uint32_t>(h), GS_R8, 1, slices, 0);
+	obs_leave_graphics();
+	ctx->mask_loaded = ctx->mask_tex != nullptr;
 }
 
 void update_size(hud_mask *ctx)
@@ -195,6 +218,8 @@ void hud_mask_update(void *data, obs_data_t *settings)
 	ctx->crop_top = static_cast<int>(obs_data_get_int(settings, k_crop_top));
 	ctx->crop_right = static_cast<int>(obs_data_get_int(settings, k_crop_right));
 	ctx->crop_bottom = static_cast<int>(obs_data_get_int(settings, k_crop_bottom));
+	ctx->expand = static_cast<int>(obs_data_get_int(settings, k_expand));
+	ctx->feather = static_cast<int>(obs_data_get_int(settings, k_feather));
 	ctx->auto_hide = obs_data_get_bool(settings, k_auto_hide);
 	load_mask_texture(ctx, obs_data_get_string(settings, k_mask_path));
 	update_size(ctx);
@@ -209,6 +234,8 @@ void hud_mask_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, k_crop_right, 0);
 	obs_data_set_default_int(settings, k_crop_bottom, 0);
 	obs_data_set_default_string(settings, k_mask_path, "");
+	obs_data_set_default_int(settings, k_expand, 0);
+	obs_data_set_default_int(settings, k_feather, 0);
 	obs_data_set_default_bool(settings, k_auto_hide, false);
 }
 
@@ -298,6 +325,16 @@ obs_properties_t *hud_mask_properties(void *data)
 
 	obs_properties_add_button2(props, "draw_mask", obs_module_text("HUDMask.DrawMask"), draw_mask_clicked, ctx);
 
+	const bool has_mask = ctx && !ctx->mask_path.empty();
+	obs_property_t *expand = obs_properties_add_int(props, k_expand, obs_module_text("HUDMask.Expand"), -48, 48, 1);
+	obs_property_t *feather = obs_properties_add_int(props, k_feather, obs_module_text("HUDMask.Feather"), 0, 48, 1);
+	obs_property_int_set_suffix(expand, " px");
+	obs_property_int_set_suffix(feather, " px");
+	obs_property_set_long_description(expand, obs_module_text("HUDMask.Expand.Help"));
+	obs_property_set_long_description(feather, obs_module_text("HUDMask.Feather.Help"));
+	obs_property_set_enabled(expand, has_mask);
+	obs_property_set_enabled(feather, has_mask);
+
 	return props;
 }
 
@@ -376,7 +413,7 @@ void hud_mask_render(void *data, gs_effect_t *)
 	gs_blend_state_pop();
 
 	gs_texture_t *tex = gs_texrender_get_texture(ctx->texrender);
-	gs_texture_t *mask = ctx->mask_loaded ? ctx->mask_image.texture : nullptr;
+	gs_texture_t *mask = ctx->mask_loaded ? ctx->mask_tex : nullptr;
 	draw_texture(tex, ctx->cx, ctx->cy, mask);
 
 	ctx->rendering = false;

@@ -784,17 +784,9 @@ public:
 			canvas_->update();
 		});
 		connect(resetZoom, &QPushButton::clicked, this, [this]() { canvas_->resetView(); });
-		connect(snap, &QPushButton::clicked, this, [this, status]() {
-			if (canvas_->snapToEdges())
-				status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snapped")));
-			else
-				status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.SnapFailed")));
-		});
+		connect(snap, &QPushButton::clicked, this, [this]() { canvas_->snapToEdges(); });
 		connect(refresh, &QPushButton::clicked, this, [this]() { startCapture(false); });
-		connect(clear, &QPushButton::clicked, this, [this, status]() {
-			canvas_->clearMask();
-			status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Hint")));
-		});
+		connect(clear, &QPushButton::clicked, this, [this]() { canvas_->clearMask(); });
 		connect(ok, &QPushButton::clicked, this, [this]() { applyAndClose(); });
 		connect(cancel, &QPushButton::clicked, this, [this]() { reject(); });
 
@@ -944,7 +936,7 @@ private:
 			return;
 		}
 
-		const int pad = 2;
+		const int pad = 32;
 		minx = std::max(0, minx - pad);
 		miny = std::max(0, miny - pad);
 		maxx = std::min(m.width() - 1, maxx + pad);

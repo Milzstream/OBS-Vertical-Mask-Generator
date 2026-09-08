@@ -1,7 +1,6 @@
 #pragma once
 
 #include <obs-module.h>
-#include <graphics/image-file.h>
 
 #include <string>
 
@@ -9,7 +8,7 @@ struct hud_mask {
 	obs_source_t *self = nullptr;
 	obs_weak_source_t *target = nullptr;
 	gs_texrender_t *texrender = nullptr;
-	gs_image_file_t mask_image{};
+	gs_texture_t *mask_tex = nullptr;
 	bool mask_loaded = false;
 	bool rendering = false;
 
@@ -20,6 +19,8 @@ struct hud_mask {
 	int crop_top = 0;
 	int crop_right = 0;
 	int crop_bottom = 0;
+	int expand = 0;
+	int feather = 0;
 	bool auto_hide = false;
 
 	uint32_t src_cx = 0;

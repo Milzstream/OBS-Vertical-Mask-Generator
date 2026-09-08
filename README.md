@@ -49,6 +49,7 @@ Requires Visual Studio 2022, CMake 3.28+, and a network connection the first tim
 ```
 cmake --preset windows-x64
 cmake --build --preset windows-x64
+ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
 ```
 
 Copy into OBS from an elevated prompt (close OBS first):
