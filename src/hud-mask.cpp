@@ -9,9 +9,9 @@ the Free Software Foundation; either version 2 of the License, or
 */
 
 #include "hud-mask.hpp"
+#include "cutout-editor.hpp"
 
 #include <obs-module.h>
-#include <graphics/image-file.h>
 #include <plugin-support.h>
 
 #include <algorithm>
@@ -32,29 +32,6 @@ constexpr const char *k_mask_path = "mask_path";
 constexpr const char *k_auto_hide = "auto_hide";
 
 gs_effect_t *mask_effect = nullptr;
-
-struct hud_mask {
-	obs_source_t *self = nullptr;
-	obs_weak_source_t *target = nullptr;
-	gs_texrender_t *texrender = nullptr;
-	gs_image_file_t mask_image{};
-	bool mask_loaded = false;
-	bool rendering = false;
-
-	std::string target_name;
-	std::string mask_path;
-
-	int crop_left = 0;
-	int crop_top = 0;
-	int crop_right = 0;
-	int crop_bottom = 0;
-	bool auto_hide = false;
-
-	uint32_t src_cx = 0;
-	uint32_t src_cy = 0;
-	uint32_t cx = 0;
-	uint32_t cy = 0;
-};
 
 obs_source_t *acquire_target(hud_mask *ctx)
 {
@@ -298,6 +275,12 @@ bool kind_modified(void *priv, obs_properties_t *props, obs_property_t *, obs_da
 	return true;
 }
 
+bool draw_mask_clicked(obs_properties_t *, obs_property_t *, void *priv)
+{
+	hud_mask_open_editor(static_cast<hud_mask *>(priv));
+	return true;
+}
+
 obs_properties_t *hud_mask_properties(void *data)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
@@ -313,18 +296,7 @@ obs_properties_t *hud_mask_properties(void *data)
 							  OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	fill_target_list(targets, "source", ctx ? ctx->self : nullptr);
 
-	obs_properties_add_int(props, k_crop_left, obs_module_text("HUDMask.Crop.Left"), 0, 8192, 1);
-	obs_properties_add_int(props, k_crop_top, obs_module_text("HUDMask.Crop.Top"), 0, 8192, 1);
-	obs_properties_add_int(props, k_crop_right, obs_module_text("HUDMask.Crop.Right"), 0, 8192, 1);
-	obs_properties_add_int(props, k_crop_bottom, obs_module_text("HUDMask.Crop.Bottom"), 0, 8192, 1);
-
-	obs_properties_add_path(props, k_mask_path, obs_module_text("HUDMask.MaskImage"), OBS_PATH_FILE,
-				obs_module_text("HUDMask.MaskImage.Filter"), nullptr);
-
-	obs_property_t *auto_hide =
-		obs_properties_add_bool(props, k_auto_hide, obs_module_text("HUDMask.AutoHide.Enable"));
-	obs_property_set_long_description(auto_hide, obs_module_text("HUDMask.AutoHide.Unavailable"));
-	obs_property_set_enabled(auto_hide, false);
+	obs_properties_add_button2(props, "draw_mask", obs_module_text("HUDMask.DrawMask"), draw_mask_clicked, ctx);
 
 	return props;
 }
@@ -460,4 +432,24 @@ void register_hud_mask_source(void)
 {
 	static obs_source_info info = make_info();
 	obs_register_source(&info);
+}
+
+obs_source_t *hud_mask_get_target(hud_mask *ctx)
+{
+	return ctx ? acquire_target(ctx) : nullptr;
+}
+
+void hud_mask_set_cutout(hud_mask *ctx, const char *path, int left, int top, int right, int bottom)
+{
+	if (!ctx || !ctx->self)
+		return;
+
+	obs_data_t *settings = obs_source_get_settings(ctx->self);
+	obs_data_set_string(settings, k_mask_path, path ? path : "");
+	obs_data_set_int(settings, k_crop_left, left);
+	obs_data_set_int(settings, k_crop_top, top);
+	obs_data_set_int(settings, k_crop_right, right);
+	obs_data_set_int(settings, k_crop_bottom, bottom);
+	obs_source_update(ctx->self, settings);
+	obs_data_release(settings);
 }
