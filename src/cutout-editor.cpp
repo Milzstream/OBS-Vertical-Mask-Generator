@@ -23,6 +23,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QLabel>
 #include <QMessageBox>
 #include <QEvent>
+#include <QKeyEvent>
 #include <QLineF>
 #include <QMetaObject>
 #include <QMouseEvent>
@@ -196,9 +197,20 @@ public:
 	explicit MaskCanvas(QWidget *parent = nullptr) : QWidget(parent)
 	{
 		setMouseTracking(true);
+		setFocusPolicy(Qt::StrongFocus);
 		setMinimumSize(640, 360);
 		setCursor(Qt::CrossCursor);
 	}
+
+	double zoom() const { return zoom_; }
+	void setSpaceDown(bool down)
+	{
+		spaceDown_ = down;
+		if (!panning_)
+			setCursor(down ? Qt::OpenHandCursor : Qt::CrossCursor);
+	}
+
+	std::function<void()> viewChanged;
 
 	void setFrame(const QImage &img)
 	{
@@ -207,6 +219,10 @@ public:
 			mask = QImage(frame.size(), QImage::Format_Grayscale8);
 			mask.fill(0);
 		}
+		zoom_ = 1.0;
+		viewCenter_ = QPointF(frame.width() / 2.0, frame.height() / 2.0);
+		if (viewChanged)
+			viewChanged();
 		update();
 	}
 
@@ -276,117 +292,100 @@ public:
 			}
 		}
 
-		std::vector<int> label(static_cast<size_t>(w) * h, 0);
-		int nlab = 0;
-		std::vector<int> stack;
-		stack.reserve(1024);
-		for (int y = 0; y < h; y++) {
-			for (int x = 0; x < w; x++) {
-				const int start = y * w + x;
-				if (!user[start] || label[start])
+		/* Keep the painted silhouette. Only slide the local outline to a
+		 * nearby contrast peak — no circle/square fitting. */
+		struct SnapPt {
+			int x, y;
+			float nx, ny;
+			int t;
+		};
+		std::vector<SnapPt> snaps;
+		snaps.reserve(1024);
+		int minx = w, miny = h, maxx = 0, maxy = 0;
+		for (int y = 1; y < h - 1; y++) {
+			for (int x = 1; x < w - 1; x++) {
+				const int i = y * w + x;
+				if (!user[i])
 					continue;
-				nlab++;
-				stack.clear();
-				stack.push_back(start);
-				label[start] = nlab;
-				while (!stack.empty()) {
-					const int i = stack.back();
-					stack.pop_back();
-					const int px = i % w;
-					const int py = i / w;
-					const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < w ? i + 1 : -1,
-							   py > 0 ? i - w : -1, py + 1 < h ? i + w : -1};
-					for (int n : nb) {
-						if (n < 0 || !user[n] || label[n])
+				minx = std::min(minx, x);
+				miny = std::min(miny, y);
+				maxx = std::max(maxx, x);
+				maxy = std::max(maxy, y);
+				if (user[i - 1] && user[i + 1] && user[i - w] && user[i + w])
+					continue;
+				float nx = 0, ny = 0;
+				for (int dy = -1; dy <= 1; dy++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						if (dx == 0 && dy == 0)
 							continue;
-						label[n] = nlab;
-						stack.push_back(n);
+						if (!user[(y + dy) * w + (x + dx)]) {
+							nx += static_cast<float>(dx);
+							ny += static_cast<float>(dy);
+						}
 					}
 				}
-			}
-		}
-
-		QImage snapped(w, h, QImage::Format_Grayscale8);
-		snapped.fill(0);
-		QPainter fill(&snapped);
-		fill.setRenderHint(QPainter::Antialiasing, true);
-		fill.setPen(Qt::NoPen);
-		fill.setBrush(Qt::white);
-
-		bool any = false;
-		for (int lab = 1; lab <= nlab; lab++) {
-			double sx = 0, sy = 0;
-			int count = 0;
-			double rmax = 0;
-			for (int i = 0; i < w * h; i++) {
-				if (label[i] != lab)
+				const float len = std::sqrt(nx * nx + ny * ny);
+				if (len < 0.5f)
 					continue;
-				const int x = i % w;
-				const int y = i / w;
-				sx += x;
-				sy += y;
-				count++;
-			}
-			if (count < 40)
-				continue;
-			sx /= count;
-			sy /= count;
-			for (int i = 0; i < w * h; i++) {
-				if (label[i] != lab)
-					continue;
-				const double dx = (i % w) - sx;
-				const double dy = (i / w) - sy;
-				rmax = std::max(rmax, std::sqrt(dx * dx + dy * dy));
-			}
-			if (rmax < 6)
-				continue;
-
-			const int nrays = 256;
-			QPolygon poly;
-			poly.reserve(nrays);
-			for (int r = 0; r < nrays; r++) {
-				const double ang = (2.0 * 3.14159265358979323846 * r) / nrays;
-				const double c = std::cos(ang);
-				const double s = std::sin(ang);
-				int bestT = static_cast<int>(rmax);
-				int bestScore = -1;
-				const int t0 = std::max(2, static_cast<int>(rmax * 0.28));
-				const int t1 = static_cast<int>(rmax * 1.22);
-				for (int t = t0; t <= t1; t++) {
-					const int x = static_cast<int>(std::lround(sx + t * c));
-					const int y = static_cast<int>(std::lround(sy + t * s));
-					if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1)
-						break;
-					int score = mag[y * w + x];
-					if (!user[y * w + x] && t > static_cast<int>(rmax))
-						score /= 2;
-					if (score > bestScore) {
-						bestScore = score;
+				nx /= len;
+				ny /= len;
+				int bestT = 0;
+				int bestS = mag[i];
+				const int inward = 10;
+				const int outward = 12;
+				for (int t = -inward; t <= outward; t++) {
+					const int xx = static_cast<int>(std::lround(x + t * nx));
+					const int yy = static_cast<int>(std::lround(y + t * ny));
+					if (xx <= 0 || yy <= 0 || xx >= w - 1 || yy >= h - 1)
+						continue;
+					const int s = mag[yy * w + xx];
+					if (s > bestS) {
+						bestS = s;
 						bestT = t;
 					}
 				}
-				if (bestScore < maxMag / 14)
-					bestT = static_cast<int>(rmax);
-				poly << QPoint(static_cast<int>(std::lround(sx + bestT * c)),
-					       static_cast<int>(std::lround(sy + bestT * s)));
+				if (bestS < maxMag / 18)
+					bestT = 0;
+				snaps.push_back({x, y, nx, ny, bestT});
 			}
-			fill.drawPolygon(poly);
-			any = true;
 		}
-		fill.end();
-
-		if (!any)
+		if (snaps.empty())
 			return false;
 
+		const int pad = 16;
+		minx = std::max(0, minx - pad);
+		miny = std::max(0, miny - pad);
+		maxx = std::min(w - 1, maxx + pad);
+		maxy = std::min(h - 1, maxy + pad);
+
 		std::vector<uint8_t> bin(static_cast<size_t>(w) * h, 0);
-		for (int y = 0; y < h; y++) {
-			const uint8_t *row = snapped.constScanLine(y);
-			memcpy(bin.data() + static_cast<size_t>(y) * w, row, w);
+		for (int y = miny; y <= maxy; y++) {
+			for (int x = minx; x <= maxx; x++) {
+				int bestD = 1 << 20;
+				int bestIdx = -1;
+				for (int si = 0; si < static_cast<int>(snaps.size()); si++) {
+					const int dx = x - snaps[si].x;
+					const int dy = y - snaps[si].y;
+					const int d = dx * dx + dy * dy;
+					if (d < bestD) {
+						bestD = d;
+						bestIdx = si;
+					}
+				}
+				if (bestIdx < 0)
+					continue;
+				const SnapPt &sp = snaps[bestIdx];
+				const float sx = sp.x + sp.t * sp.nx;
+				const float sy = sp.y + sp.t * sp.ny;
+				if ((x - sx) * sp.nx + (y - sy) * sp.ny <= 0.75f)
+					bin[y * w + x] = 255;
+			}
 		}
 
 		const int feather = 6;
 		std::vector<int> dist(static_cast<size_t>(w) * h, 9999);
-		stack.clear();
+		std::vector<int> stack;
+		stack.reserve(1024);
 		for (int y = 0; y < h; y++) {
 			for (int x = 0; x < w; x++) {
 				const int i = y * w + x;
@@ -485,6 +484,12 @@ protected:
 
 	void mousePressEvent(QMouseEvent *e) override
 	{
+		if (e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && spaceDown_)) {
+			panning_ = true;
+			lastPanWidget_ = e->pos();
+			setCursor(Qt::ClosedHandCursor);
+			return;
+		}
 		if (e->button() == Qt::LeftButton) {
 			painting_ = true;
 			lastSrc_ = widgetToSrc(e->pos());
@@ -496,6 +501,18 @@ protected:
 	{
 		cursorOn_ = true;
 		cursorSrc_ = widgetToSrc(e->pos());
+		if (panning_) {
+			const double scale = fitScale() * zoom_;
+			if (scale > 1e-6) {
+				const QPoint d = e->pos() - lastPanWidget_;
+				viewCenter_ -= QPointF(d.x() / scale, d.y() / scale);
+				lastPanWidget_ = e->pos();
+				if (viewChanged)
+					viewChanged();
+			}
+			update();
+			return;
+		}
 		if (painting_ && (e->buttons() & Qt::LeftButton)) {
 			const QPointF now = cursorSrc_;
 			stroke(lastSrc_, now);
@@ -508,6 +525,9 @@ protected:
 	{
 		if (e->button() == Qt::LeftButton)
 			painting_ = false;
+		if (e->button() == Qt::MiddleButton || e->button() == Qt::LeftButton)
+			panning_ = false;
+		setCursor(spaceDown_ ? Qt::OpenHandCursor : Qt::CrossCursor);
 	}
 
 	void leaveEvent(QEvent *) override
@@ -516,23 +536,69 @@ protected:
 		update();
 	}
 
+	void keyPressEvent(QKeyEvent *e) override
+	{
+		if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+			setSpaceDown(true);
+			e->accept();
+			return;
+		}
+		QWidget::keyPressEvent(e);
+	}
+
+	void keyReleaseEvent(QKeyEvent *e) override
+	{
+		if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+			setSpaceDown(false);
+			e->accept();
+			return;
+		}
+		QWidget::keyReleaseEvent(e);
+	}
+
 	void wheelEvent(QWheelEvent *e) override
 	{
+		if (e->modifiers() & Qt::ControlModifier) {
+			if (frame.isNull())
+				return;
+			const QPoint pos = e->position().toPoint();
+			const QPointF src = widgetToSrc(pos);
+			const double factor = e->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
+			zoom_ = std::clamp(zoom_ * factor, 1.0, 16.0);
+			const double scale = fitScale() * zoom_;
+			if (scale > 1e-6) {
+				viewCenter_.setX(src.x() - (pos.x() - width() / 2.0) / scale);
+				viewCenter_.setY(src.y() - (pos.y() - height() / 2.0) / scale);
+			}
+			if (viewChanged)
+				viewChanged();
+			e->accept();
+			update();
+			return;
+		}
 		brush = std::clamp(brush + (e->angleDelta().y() > 0 ? 2 : -2), 4, 96);
 		update();
 	}
 
 private:
+	double fitScale() const
+	{
+		if (frame.isNull() || width() <= 0 || height() <= 0)
+			return 1.0;
+		return std::min(width() / static_cast<double>(frame.width()),
+				height() / static_cast<double>(frame.height()));
+	}
+
 	QRect fitted() const
 	{
 		if (frame.isNull())
 			return {};
-		const QSize avail = size();
-		QSize img = frame.size();
-		img.scale(avail, Qt::KeepAspectRatio);
-		const int x = (avail.width() - img.width()) / 2;
-		const int y = (avail.height() - img.height()) / 2;
-		return {x, y, img.width(), img.height()};
+		const double scale = fitScale() * zoom_;
+		const int dw = std::max(1, static_cast<int>(std::lround(frame.width() * scale)));
+		const int dh = std::max(1, static_cast<int>(std::lround(frame.height() * scale)));
+		const int x = static_cast<int>(std::lround(width() / 2.0 - viewCenter_.x() * scale));
+		const int y = static_cast<int>(std::lround(height() / 2.0 - viewCenter_.y() * scale));
+		return {x, y, dw, dh};
 	}
 
 	QPointF widgetToSrc(const QPoint &p) const
@@ -593,7 +659,12 @@ private:
 	}
 
 	bool painting_ = false;
+	bool panning_ = false;
+	bool spaceDown_ = false;
 	bool cursorOn_ = false;
+	double zoom_ = 1.0;
+	QPointF viewCenter_;
+	QPoint lastPanWidget_;
 	QPointF lastSrc_;
 	QPointF cursorSrc_;
 };
@@ -623,8 +694,14 @@ public:
 		auto *clear = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Clear")), this);
 		auto *ok = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Apply")), this);
 		auto *cancel = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Cancel")), this);
+		auto *zoomLabel = new QLabel(this);
 		auto *status = new QLabel(QString::fromUtf8(obs_module_text("HUDMask.Editor.Hint")), this);
 		status->setWordWrap(true);
+		canvas_->viewChanged = [this, zoomLabel]() {
+			zoomLabel->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Zoom"))
+						   .arg(static_cast<int>(std::lround(canvas_->zoom() * 100))));
+		};
+		canvas_->viewChanged();
 
 		auto updateBrushLabel = [brushLabel, brush]() {
 			brushLabel->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Brush")) +
@@ -668,6 +745,7 @@ public:
 		tools->addWidget(erase);
 		tools->addWidget(brushLabel);
 		tools->addWidget(brush, 1);
+		tools->addWidget(zoomLabel);
 		tools->addWidget(snap);
 		tools->addWidget(refresh);
 		tools->addWidget(clear);
@@ -681,9 +759,31 @@ public:
 		root->addLayout(tools);
 
 		startCapture(true);
+		canvas_->setFocus();
 	}
 
 	~CutoutDialog() override { stopCapture(); }
+
+protected:
+	void keyPressEvent(QKeyEvent *e) override
+	{
+		if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+			canvas_->setSpaceDown(true);
+			e->accept();
+			return;
+		}
+		QDialog::keyPressEvent(e);
+	}
+
+	void keyReleaseEvent(QKeyEvent *e) override
+	{
+		if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+			canvas_->setSpaceDown(false);
+			e->accept();
+			return;
+		}
+		QDialog::keyReleaseEvent(e);
+	}
 
 private:
 	void stopCapture()
