@@ -38,7 +38,7 @@ When auto-hide is on:
 - Presence is about the **element**, not the artwork inside it (cooldowns and meter numbers should not hide a bar).
 - **Islands** in one mask can hide independently (one of three ability circles gone → only that circle drops).
 - All visible auto-hide masks are scored in **one shared cycle** (minimap and abilities together, not a timer per source). Hidden items are skipped.
-- If islands are a poor fit, **Split into N sources** from the editor. Automatic resize of islands is a later experiment, not the v1 bar.
+- If islands are a poor fit, **Split into N sources** from the editor. If a layout changes size, re-open the editor. The plugin does not auto-resize masks.
 
 Manual scene-item visibility always still works.
 

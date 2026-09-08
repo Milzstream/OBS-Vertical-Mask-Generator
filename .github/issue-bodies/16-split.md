@@ -8,7 +8,7 @@ If cleanup finds multiple islands (e.g. three ability circles), the editor offer
 
 One click creates N HUD Mask sources (same sampled target, one island each), places them so the composite still lines up on the canvas, and removes the original combined source. The user does not highlight the bar three times.
 
-Each resulting source can hide, move, and scale independently — the practical alternative to auto-resize when kits differ.
+Each resulting source can hide, move, and scale independently when kits differ.
 
 ## In scope
 
@@ -22,7 +22,7 @@ Each resulting source can hide, move, and scale independently — the practical 
 ## Out of scope
 
 - Auto-split with no confirmation
-- Auto-resize of a grown circle (#12)
+- Auto-resize of a grown circle (not doing)
 - Merging sources back into one (nice later, not required)
 
 ## Acceptance

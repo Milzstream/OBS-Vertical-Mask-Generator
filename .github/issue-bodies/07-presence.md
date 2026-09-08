@@ -24,7 +24,7 @@ Checks run in **one plugin-wide cycle**, not a timer per mask. Minimap + abiliti
 
 ## Out of scope
 
-- Auto-resize of islands (#12)
+- Auto-resize of islands (not doing)
 - A thread or GPU readback per HUD Mask instance
 - Checking sources that are hidden or not on an active canvas
 - Guaranteeing zero false hides

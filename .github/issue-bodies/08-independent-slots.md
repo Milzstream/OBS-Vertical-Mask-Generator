@@ -18,7 +18,7 @@ Example: an ability bar drawn as three circles. Some kits only show the right tw
 
 ## Out of scope
 
-- Auto-growing a circle to a larger size (#12)
+- Auto-growing a circle to a larger size (not doing; split or re-edit instead)
 - Splitting a single connected bar into fake slots
 
 ## Acceptance

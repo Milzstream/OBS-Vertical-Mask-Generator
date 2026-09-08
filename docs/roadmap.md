@@ -23,7 +23,6 @@ Public release when cut-out is reliable and auto-hide is safe to leave off (or o
 ## After v1
 
 - Better cleanup (eraser, multiple strokes, fewer merged islands)
-- Experimental island resize (panel grew / circle got larger)
 - Tested macOS / Linux, not only CI packages
 
 ## Not doing
@@ -32,6 +31,7 @@ Public release when cut-out is reliable and auto-hide is safe to leave off (or o
 - Per-game mask libraries
 - Full-frame autodetect with no highlight
 - Auto-layout on the canvas
+- Auto-resize of islands when HUD chrome grows/shrinks
 - Shipping PNG files as the way to set up a game
 
 ## Issues
@@ -41,6 +41,5 @@ Public release when cut-out is reliable and auto-hide is safe to leave off (or o
 | Epic | [#1](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/1) |
 | MVP | [#2](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/2) [#3](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/3) [#4](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/4) [#10](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/10) [#5](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/5) [#14](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/14) |
 | v1 | [#7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7) [#8](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/8) [#16](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/16) |
-| Later | [#12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) |
 | Research | [#15](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/15) |
-| Closed | [#6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6) [#9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) [#11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11) [#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) |
+| Closed | [#6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6) [#9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) [#11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11) [#12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) [#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) |

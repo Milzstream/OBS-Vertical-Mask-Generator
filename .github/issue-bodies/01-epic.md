@@ -24,13 +24,14 @@ All visible auto-hide masks share **one presence cycle**, grouped by sampled sou
 
 If cleanup finds several blobs, **Split into N sources** creates one HUD Mask per island in a click.
 
-If islands misbehave, use one HUD Mask per blob. Auto-resize of a blob that grew is after v1.
+If islands misbehave, **Split into N sources** or highlight each blob as its own HUD Mask. Layout changes: re-open the editor. No auto-resize.
 
 ## Not doing
 
 - Game database / shipped Photoshop PNGs
 - Motion / “walk around while we detect UI”
 - Auto-placing cut-outs
+- Auto-resize of islands when HUD chrome grows/shrinks
 - Game memory / Aitum-private APIs
 - Paid / telemetry
 
@@ -39,11 +40,9 @@ If islands misbehave, use one HUD Mask per blob. Auto-resize of a blob that grew
 | Phase | Outcome |
 | --- | --- |
 | MVP | Highlight → clean → crop → placeable source on any canvas |
-| v1 (public) | Auto-hide when the element is gone; Windows installer; repo can go public |
-| After | Better cleanup, mask that follows a resizing panel |
+| v1 (public) | Optional auto-hide; split islands; Windows installer; repo can go public |
+| After | Better cleanup; tested macOS/Linux |
 
 ## Docs
 
-`docs/vision.md`, `architecture.md`, `feasibility.md`, `roadmap.md`, `current-workflow.md`
-
-NTE and WoW are **test cases**, not the product. The Photoshop `Vertical UI Masks` folders should become unnecessary.
+`docs/vision.md`, `architecture.md`, `feasibility.md`, `roadmap.md`, `manual-workflow.md`

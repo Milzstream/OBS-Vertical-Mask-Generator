@@ -40,11 +40,7 @@ Presence is **one shared cycle** for all visible, auto-hide-on masks. Minimap + 
 
 ## Split into N sources (setup)
 
-If cleanup finds 3 blobs, offer to explode that HUD Mask into 3 sources. Cheap, no runtime cost, and each piece can hide or be transformed on its own. Better UX than auto-resize for “this kit only has two circles.”
-
-## Auto-resize (later, optional)
-
-If a circle grows to match its neighbors, or a meter gets taller in combat, updating that island’s mask is possible in principle (search a padded box for a similar blob). It is easy to get wrong (layout jump, grabbing world pixels) and is **not** the v1 bar. Re-opening the editor, or splitting into separate sources, is the supported way to handle a layout that changed size.
+If cleanup finds 3 blobs, offer to explode that HUD Mask into 3 sources. Cheap, no runtime cost, and each piece can hide or be transformed on its own. If a layout later changes size, re-open the editor.
 
 ## Will not do
 
@@ -53,6 +49,7 @@ If a circle grows to match its neighbors, or a meter gets taller in combat, upda
 | Walk around to detect UI from motion | Not doing |
 | In-plugin game database | Not doing |
 | Auto-place items on the canvas | Not doing |
+| Auto-resize islands when a panel/circle grows | Not doing |
 | Unsupervised full-frame HUD find | Not v1 |
 | Game memory / injection | Never |
 | Aitum-private API | Never |
