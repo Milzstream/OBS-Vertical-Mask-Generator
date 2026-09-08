@@ -11,13 +11,6 @@ on:
 permissions:
   contents: write
 jobs:
-  check-format:
-    name: Check Formatting 🔍
-    if: github.ref_name == 'master' || github.ref_name == 'main'
-    uses: ./.github/workflows/check-format.yaml
-    permissions:
-      contents: read
-
   build-project:
     name: Build Project 🧱
     uses: ./.github/workflows/build-project.yaml
@@ -69,23 +62,9 @@ jobs:
           shopt -s nullglob
 
           root_dir="$(pwd)"
-          commit_hash="${GITHUB_SHA:0:9}"
 
-          variants=(
-            'windows-x64;zip|exe'
-            'macos-universal;tar.xz|pkg'
-            'ubuntu-24.04-x86_64;tar.xz|deb|ddeb'
-            'sources;tar.xz'
-          )
-
-          for variant_data in "${variants[@]}"; do
-            IFS=';' read -r variant suffix <<< "${variant_data}"
-
-            candidates=(*-${variant}-${commit_hash}/@(*|*-dbgsym).@(${suffix}))
-
-            for candidate in "${candidates[@]}"; do
-              mv "${candidate}" "${root_dir}"
-            done
+          for candidate in */*.zip */*.exe; do
+            mv "${candidate}" "${root_dir}/$(basename "${candidate}")"
           done
 
       - name: Generate Checksums 🪪
@@ -95,17 +74,26 @@ jobs:
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
           shopt -s extglob
 
-          echo "### Checksums" > ${{ github.workspace }}/CHECKSUMS.txt
-          for file in ${{ github.workspace }}/@(*.exe|*.deb|*.ddeb|*.pkg|*.tar.xz|*.zip); do
-            echo "    ${file##*/}: $(sha256sum "${file}" | cut -d " " -f 1)" >> ${{ github.workspace }}/CHECKSUMS.txt
-          done
+          {
+            echo "## Downloads"
+            echo
+            echo "- **Installer** (\`*-windows-x64.exe\`) — recommended"
+            echo "- **Portable zip** (\`*-windows-x64.zip\`) — copy the \`vertical-hud-mask\` folder into \`%ProgramData%\\obs-studio\\plugins\\\`"
+            echo "- **Source** (\`*-source.zip\`)"
+            echo
+            echo "### Checksums"
+            echo
+            for file in ${{ github.workspace }}/@(*.exe|*.zip); do
+              echo "- \`${file##*/}\`: \`$(sha256sum "${file}" | cut -d " " -f 1)\`"
+            done
+          } > ${{ github.workspace }}/CHECKSUMS.txt
 
       - name: Create Release 🛫
         if: fromJSON(steps.check.outputs.validTag)
         id: create_release
         uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564
         with:
-          draft: true
+          draft: false
           prerelease: ${{ fromJSON(steps.check.outputs.prerelease) }}
           tag_name: ${{ steps.check.outputs.version }}
           name: ${{ needs.build-project.outputs.pluginName }} ${{ steps.check.outputs.version }}
@@ -113,7 +101,3 @@ jobs:
           files: |
             ${{ github.workspace }}/*.exe
             ${{ github.workspace }}/*.zip
-            ${{ github.workspace }}/*.pkg
-            ${{ github.workspace }}/*.deb
-            ${{ github.workspace }}/*.ddeb
-            ${{ github.workspace }}/*.tar.xz

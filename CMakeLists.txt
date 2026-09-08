@@ -43,7 +43,16 @@ target_sources(
           src/cutout-editor.hpp
           src/mask-process.cpp
           src/mask-process.hpp
+          src/update-check.cpp
+          src/update-check.hpp
 )
+
+string(REGEX REPLACE "^https://github.com/" "" _gh_repo "${PLUGIN_WEBSITE}")
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HUD_MASK_GH_REPO="${_gh_repo}")
+
+if(OS_WINDOWS)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp)
+endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 

@@ -10,7 +10,7 @@ OBS plugin (C++/Qt), new **input source**. GPL-2.0-or-later.
 | Sample any source | Game capture, scene, display, browser — same OBS API. |
 | No game database | Settings persist on the source in the scene collection. |
 | Custom Qt editor | Stock properties cannot host a live video + highlighter. |
-| Windows first, multi-platform CI | obs-plugintemplate already builds Win installer + zip, macOS pkg, Linux deb, source archive. |
+| Windows first | CI publishes a Windows installer, portable zip, and source zip. macOS/Linux are later. |
 
 ## Add-source flow
 

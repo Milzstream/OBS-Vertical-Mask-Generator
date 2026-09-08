@@ -23,7 +23,8 @@ Public release when cut-out is reliable and auto-hide is safe to leave off (or o
 ## After v1
 
 - Better cleanup (eraser, multiple strokes, fewer merged islands)
-- Tested macOS / Linux, not only CI packages
+- macOS / Linux builds and installers
+- clang-format / CMake format checks in CI
 
 ## Not doing
 
