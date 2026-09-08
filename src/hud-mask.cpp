@@ -17,10 +17,12 @@ the Free Software Foundation; either version 2 of the License, or
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace {
 
 constexpr const char *k_id = "vertical_hud_mask";
+constexpr const char *k_kind = "target_kind";
 constexpr const char *k_source = "target";
 constexpr const char *k_crop_left = "crop_left";
 constexpr const char *k_crop_top = "crop_top";
@@ -223,6 +225,7 @@ void hud_mask_update(void *data, obs_data_t *settings)
 
 void hud_mask_defaults(obs_data_t *settings)
 {
+	obs_data_set_default_string(settings, k_kind, "source");
 	obs_data_set_default_string(settings, k_source, "");
 	obs_data_set_default_int(settings, k_crop_left, 0);
 	obs_data_set_default_int(settings, k_crop_top, 0);
@@ -232,32 +235,83 @@ void hud_mask_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, k_auto_hide, false);
 }
 
-bool add_source_to_list(void *param, obs_source_t *source)
+struct collect_ctx {
+	std::vector<std::string> *names = nullptr;
+	bool scenes = false;
+	obs_source_t *self = nullptr;
+};
+
+bool collect_targets(void *param, obs_source_t *source)
 {
-	auto *list = static_cast<obs_property_t *>(param);
-	const uint32_t flags = obs_source_get_output_flags(source);
-	if ((flags & OBS_SOURCE_VIDEO) == 0)
+	auto *e = static_cast<collect_ctx *>(param);
+	if (!source || source == e->self)
 		return true;
-	if (obs_source_get_type(source) == OBS_SOURCE_TYPE_FILTER)
+
+	const bool is_scene = obs_source_get_type(source) == OBS_SOURCE_TYPE_SCENE;
+	if (e->scenes != is_scene)
 		return true;
+
+	if (!e->scenes) {
+		if (obs_source_get_type(source) != OBS_SOURCE_TYPE_INPUT)
+			return true;
+		if ((obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0)
+			return true;
+		const char *id = obs_source_get_id(source);
+		if (id && strcmp(id, k_id) == 0)
+			return true;
+	}
+
 	const char *name = obs_source_get_name(source);
 	if (!name || !name[0])
 		return true;
-	if (strcmp(obs_source_get_id(source), k_id) == 0)
-		return true;
-	obs_property_list_add_string(list, name, name);
+
+	e->names->emplace_back(name);
 	return true;
 }
 
-obs_properties_t *hud_mask_properties(void *)
+void fill_target_list(obs_property_t *list, const char *kind, obs_source_t *self)
 {
+	obs_property_list_clear(list);
+	obs_property_list_add_string(list, obs_module_text("HUDMask.Source.None"), "");
+
+	const bool scenes = kind && strcmp(kind, "scene") == 0;
+	std::vector<std::string> names;
+	collect_ctx e{&names, scenes, self};
+	if (scenes)
+		obs_enum_scenes(collect_targets, &e);
+	else
+		obs_enum_sources(collect_targets, &e);
+
+	std::sort(names.begin(), names.end());
+	names.erase(std::unique(names.begin(), names.end()), names.end());
+	for (const auto &name : names)
+		obs_property_list_add_string(list, name.c_str(), name.c_str());
+
+	obs_property_set_description(list, obs_module_text(scenes ? "HUDMask.Scene" : "HUDMask.Source"));
+}
+
+bool kind_modified(void *priv, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	auto *ctx = static_cast<hud_mask *>(priv);
+	fill_target_list(obs_properties_get(props, k_source), obs_data_get_string(settings, k_kind),
+			 ctx ? ctx->self : nullptr);
+	return true;
+}
+
+obs_properties_t *hud_mask_properties(void *data)
+{
+	auto *ctx = static_cast<hud_mask *>(data);
 	obs_properties_t *props = obs_properties_create();
 
-	obs_property_t *sources = obs_properties_add_list(props, k_source, obs_module_text("HUDMask.Source"),
+	obs_property_t *kind = obs_properties_add_list(props, k_kind, obs_module_text("HUDMask.Type"),
+						       OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_property_list_add_string(kind, obs_module_text("HUDMask.Type.Source"), "source");
+	obs_property_list_add_string(kind, obs_module_text("HUDMask.Type.Scene"), "scene");
+	obs_property_set_modified_callback2(kind, kind_modified, ctx);
+
+	obs_property_t *targets = obs_properties_add_list(props, k_source, obs_module_text("HUDMask.Source"),
 							  OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-	obs_property_list_add_string(sources, obs_module_text("HUDMask.Source.None"), "");
-	obs_enum_sources(add_source_to_list, sources);
-	obs_enum_scenes(add_source_to_list, sources);
+	fill_target_list(targets, "source", ctx ? ctx->self : nullptr);
 
 	obs_properties_add_int(props, k_crop_left, obs_module_text("HUDMask.Crop.Left"), 0, 8192, 1);
 	obs_properties_add_int(props, k_crop_top, obs_module_text("HUDMask.Crop.Top"), 0, 8192, 1);
@@ -267,7 +321,8 @@ obs_properties_t *hud_mask_properties(void *)
 	obs_properties_add_path(props, k_mask_path, obs_module_text("HUDMask.MaskImage"), OBS_PATH_FILE,
 				obs_module_text("HUDMask.MaskImage.Filter"), nullptr);
 
-	obs_property_t *auto_hide = obs_properties_add_bool(props, k_auto_hide, obs_module_text("HUDMask.AutoHide.Enable"));
+	obs_property_t *auto_hide =
+		obs_properties_add_bool(props, k_auto_hide, obs_module_text("HUDMask.AutoHide.Enable"));
 	obs_property_set_long_description(auto_hide, obs_module_text("HUDMask.AutoHide.Unavailable"));
 	obs_property_set_enabled(auto_hide, false);
 
