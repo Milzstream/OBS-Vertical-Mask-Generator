@@ -75,6 +75,12 @@ jobs:
           shopt -s extglob
 
           {
+            echo "HUD Mask ${{ steps.check.outputs.version }} for OBS Studio on Windows."
+            echo
+            echo "Add **HUD Mask**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is not in this release."
+            echo
+            echo "Close OBS before installing. If you previously copied files into \`C:\\Program Files\\obs-studio\\\`, remove those first so OBS does not load the plugin twice (see the README)."
+            echo
             echo "## Downloads"
             echo
             echo "- **Installer** (\`*-windows-x64.exe\`) — recommended"
@@ -98,6 +104,7 @@ jobs:
           tag_name: ${{ steps.check.outputs.version }}
           name: ${{ needs.build-project.outputs.pluginName }} ${{ steps.check.outputs.version }}
           body_path: ${{ github.workspace }}/CHECKSUMS.txt
+          fail_on_unmatched_files: true
           files: |
             ${{ github.workspace }}/*.exe
             ${{ github.workspace }}/*.zip

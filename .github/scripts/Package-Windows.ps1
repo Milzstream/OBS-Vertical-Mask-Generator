@@ -27,11 +27,8 @@ if ( $PSVersionTable.PSVersion -lt '7.2.0' ) {
 }
 
 function Get-IsccPath {
-    $cmd = Get-Command iscc -ErrorAction SilentlyContinue
-    if ( $cmd ) {
-        return $cmd.Source
-    }
-
+    # Prefer the real compiler. The Chocolatey `iscc` shim re-parses the
+    # command line and treats a define like /DMyAppName="HUD Mask" as two scripts.
     $candidates = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
@@ -52,6 +49,10 @@ function Get-IsccPath {
     }
 
     throw "ISCC.exe not found after Inno Setup install"
+}
+
+function ConvertTo-InnoPath([string] $Path) {
+    return ((Resolve-Path -Path $Path).Path -replace '\\', '/')
 }
 
 function Package {
@@ -109,19 +110,22 @@ function Package {
 
     Log-Group "Building installer..."
     $Iscc = Get-IsccPath
-    $Iss = Join-Path $ProjectRoot "cmake\windows\resources\installer.iss"
-    $Defines = @(
-        "/DMyAppName=`"${DisplayName}`""
-        "/DMyAppVersion=`"${ProductVersion}`""
-        "/DMyAppPublisher=`"${Author}`""
-        "/DMyAppURL=`"${Website}`""
-        "/DPluginName=`"${ProductName}`""
-        "/DSourceDir=`"${PluginDir}`""
-        "/DOutputDir=`"${ReleaseDir}`""
-        "/DOutputName=`"${OutputName}`""
-        "/DLicenseFile=`"$(Join-Path $ProjectRoot 'LICENSE')`""
-    )
-    Invoke-External $Iscc @Defines $Iss
+    $Template = ConvertTo-InnoPath (Join-Path $ProjectRoot "cmake\windows\resources\installer.iss")
+    $GeneratedIss = Join-Path $ReleaseDir "installer.generated.iss"
+    @(
+        "#define MyAppName `"${DisplayName}`""
+        "#define MyAppVersion `"${ProductVersion}`""
+        "#define MyAppPublisher `"${Author}`""
+        "#define MyAppURL `"${Website}`""
+        "#define PluginName `"${ProductName}`""
+        "#define SourceDir `"$(ConvertTo-InnoPath $PluginDir)`""
+        "#define OutputDir `"$(ConvertTo-InnoPath $ReleaseDir)`""
+        "#define OutputName `"${OutputName}`""
+        "#define LicenseFile `"$(ConvertTo-InnoPath (Join-Path $ProjectRoot 'LICENSE'))`""
+        ""
+        "#include `"${Template}`""
+    ) | Set-Content -Path $GeneratedIss -Encoding utf8NoBOM
+    Invoke-External $Iscc $GeneratedIss
     Log-Group
 
     Log-Group "Archiving source..."
