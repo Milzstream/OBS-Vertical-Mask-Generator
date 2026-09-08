@@ -1,20 +1,21 @@
 ## Phase
 
-After v1
+After v1 — experimental
 
 ## Goal
 
-If a panel **resizes** (WoW Details growing in combat) or a kit **changes slot count**, optionally update the mask instead of only hide/show.
+If an island **changes size** (circle grew to match its neighbors, meter taller in combat), optionally update that island’s mask instead of only hide/show.
 
-v1 only hides when the element is gone. This issue is follow-up if that is not enough.
+v1: re-open the editor, or use separate sources. This issue is only if that is not enough.
 
-## Not
+## Constraints
 
-- NTE-specific circle detector as a product feature
-- Per-frame morph
-- A game database of variants
+- Must not grab world pixels
+- Must not jump the scene item
+- Must stay in the presence CPU budget (no full-frame, no 60 fps CV)
+- Allowed to fail and be closed
 
 ## Acceptance
 
-- [ ] Spike: resizing a meter does not leave a permanent hole or clip
-- [ ] If too brittle, leave v1 hide/show and close this
+- [ ] Spike notes with a resizing panel and a same-bar-larger-circles case
+- [ ] If brittle, keep v1 hide/show + manual re-edit

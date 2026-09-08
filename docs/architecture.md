@@ -2,19 +2,17 @@
 
 ## Form factor
 
-**OBS plugin (C++/Qt), new input source.** One instance = one cut-out.
+OBS plugin (C++/Qt), new **input source**. GPL-2.0-or-later.
 
 | Choice | Why |
 | --- | --- |
-| Source, not filter | Needs its own scene item to drag and scale on any canvas. A filter still needs a clone to hang off. |
-| Sample any source | Game capture, scene, display capture, browser — same OBS API. |
-| No game database | Settings live on the source, which already persists in the OBS scene collection. |
-| Custom Qt editor | Stock `obs_properties` cannot host a live video + highlighter. The add-source / properties flow opens our cutout window. |
-| Windows dogfood, multi-platform build | OBS plugins from obs-plugintemplate already CI to Win installer + zip, macOS pkg, Linux deb, source archive. We test Windows first. |
+| Source, not filter | Needs its own scene item to drag and scale. |
+| Sample any source | Game capture, scene, display, browser — same OBS API. |
+| No game database | Settings persist on the source in the scene collection. |
+| Custom Qt editor | Stock properties cannot host a live video + highlighter. |
+| Windows first, multi-platform CI | obs-plugintemplate already builds Win installer + zip, macOS pkg, Linux deb, source archive. |
 
-GPL-2.0-or-later.
-
-## Add-source flow (the product)
+## Add-source flow
 
 ```
 Add Source → HUD Mask → name it
@@ -24,86 +22,87 @@ Add Source → HUD Mask → name it
 │                                         │
 │  ┌─────────────────────────────────┐    │
 │  │  live view of sampled source    │    │
-│  │  user highlighter over the UI   │    │
+│  │  highlighter over the element   │    │
 │  └─────────────────────────────────┘    │
-│  tools: highlight · erase · reset       │
-│  [ Cleanup ]  preview of tight mask     │
+│  highlight · erase · reset · cleanup    │
 │                           [ OK ]        │
 └─────────────────────────────────────────┘
         ↓
 source size = bounding box of the cleaned mask
-scene item appears on the canvas → user transforms it
+user transforms the scene item
 ```
 
-OBS will still show the normal properties sheet. That sheet is: sampled-source dropdown, button **Edit cutout…** (reopens this window), maybe feather / invert. The highlighter is not a row of spinboxes.
+The normal properties sheet is small: sampled source, **Edit cutout…**, feather, invert, **Auto-hide** checkbox.
+
+## Mask islands
+
+After cleanup, the mask is labeled into **connected components** (islands). A highlight over three separate ability circles should yield three islands. A single solid panel is one island.
+
+Each island stores:
+
+- Pixel mask
+- Bounding box (in the crop)
+- Presence signature (chrome, not fill)
+
+The scene item’s size stays the **full crop**. Hidden islands become transparent holes; the item does not jump on the canvas.
+
+If cleanup merges blobs that should stay separate, the user either tightens the highlight or uses one HUD Mask per blob.
 
 ## Runtime
 
 ```
-Every frame (GPU, cheap)
-  sample target source into a texrender
-  draw the crop through the cleaned mask
-  multiply alpha by presence (0..1)
+Every frame (GPU)
+  sample target into a texrender
+  draw crop through the current mask
+  (optional) zero alpha on islands scored absent
 
-Few times per second (small ROI, not full 4K, off the graphics thread)
-  score: “is this UI element still here?”
-  hysteresis → fade presence
+If auto-hide is on, a few times per second
+  (small ROI per island, downscaled, off the graphics thread)
+  score each island
+  hysteresis + fade
 ```
 
-Presence must ignore **contents**:
+Auto-hide **off**: no analysis, no extra CPU. The source is a static cut-out.
 
-| Element | Interior changes | What we should match |
-| --- | --- | --- |
-| WoW action bar | Spell icons, cooldowns | Slot chrome / bar shape |
-| WoW Details meter | Numbers, bar fill, height | Dark window, roughly |
-| Minimap | Terrain, pings | Frame / circle, not the map |
-| NTE abilities | Icons, which slots exist | Slot frames; hide if the group is gone |
+Presence matches the **slot/frame**, not icons, numbers, or minimap terrain.
 
-If we template-match the highlighted pixels naively, the action bar will flicker every time a cooldown pulses. The stored signature should be biased toward stable chrome, or a loose match on the masked region as a whole.
+## Highlight cleanup (setup only)
 
-## Highlight cleanup (setup, not every frame)
+User stroke = foreground seed, inside a dilated box of the paint:
 
-User stroke = “this is the UI” seed. Plugin, inside a dilated bounding box of the stroke:
-
-1. Treat the stroke as foreground, unpainted as likely background.
-2. GrabCut / watershed / edge snap — pick one spike and keep it if it hugs chrome.
-3. Morphology (close holes, drop specks) + feather.
+1. GrabCut / watershed / edge snap (spike one, keep it if it hugs chrome).
+2. Morphology + feather.
+3. Connected-component islands.
 4. Crop = bounding box of remaining alpha.
 
-“Perfectly match” is the aim. First versions will miss translucent edges and busy action bars. **Erase and paint again** is the escape hatch, not a game-specific tweak.
-
-Cleanup runs when the user asks (button or pause after a stroke), not at 60 fps.
+Runs on a snapshot or paused frame when the user asks, never at 60 fps.
 
 ## Persistence
 
-Saved on the source (scene collection JSON):
+On the source:
 
 - Target source name/uuid
-- Crop rect (computed)
-- Mask texture (PNG in the source settings, or a file next to the scene collection)
-- Presence signature (from the cleaned crop at OK time)
-- Feather, invert, presence on/off
+- Crop rect
+- Mask (and island list)
+- Per-island presence signatures
+- Feather, invert, auto-hide on/off
 
-No `profiles/` game packs. That folder in this repo is leftover planning and can go away.
+## Performance budget
 
-## Stream Suite and everywhere else
+All HUD Mask instances combined should cost less than an extra game capture:
 
-HUD Mask is a normal OBS source. It can sit on the main canvas, a vertical canvas, or any extra canvas. The intended use is: add it on Aitum Vertical, point it at a main-canvas game capture.
+- GPU: sample + small masked blit
+- CPU: only if auto-hide is on; per-island crops, ≤10 Hz, never full-frame
+- Cleanup: editor only
 
-We do not link Stream Suite. Extra-canvas sampling is still the sharp test (Source Clone has burned itself on this before), but the plugin must also work in vanilla OBS with a single canvas.
+If presence cannot stay in that budget, it stays off and the cut-out still works.
 
-## Packaging (CI)
+## Stream Suite
 
-obs-plugintemplate default artifacts, which match what you see on other plugins:
-
-- Windows: installer `.exe` that puts the plugin in the OBS plugins folder, plus a zip of the same files
-- Source: `.zip` / `.tar.xz` of the tagged tree
-- macOS `.pkg` and Linux `.deb` from the same CI, untested until we care
-
-v1 public release = a GitHub Release with those files and a short install note.
+Normal OBS source. Intended placement: extra (vertical) canvas, sampling a main-canvas capture. Must also work on a single vanilla canvas. Do not link Stream Suite.
 
 ## Safety
 
-- No process injection, no game memory, no network, no telemetry.
-- Presence off until a cutout exists, so a new source does not flicker.
-- Manual visibility still overrides.
+- No injection, game memory, network, or telemetry
+- Auto-hide off by default
+- Scene-item visibility still overrides

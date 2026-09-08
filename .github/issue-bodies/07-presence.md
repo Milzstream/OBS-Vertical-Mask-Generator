@@ -1,34 +1,32 @@
 ## Phase
 
-v1 — public/stable bar
+v1 — optional; public bar is “safe to leave off”
 
 ## Goal
 
-When the **highlighted element** is gone from the sampled source, this instance fades out. When it is back, it fades in. No game memory. No game list.
+**Auto-hide is a checkbox, off by default.**
+
+With it off, HUD Mask is still useful: highlight → cut-out, no Photoshop. With it on, islands whose element is gone go transparent instead of showing world/loading through the hole.
 
 ## In scope
 
-- Off until a cutout exists
-- Signature of the **element** (chrome / panel), not spell icons / meter numbers / minimap terrain
-- Read back the **crop only**, downscaled, ≤10 Hz
+- Checkbox on the properties sheet; default **off** (zero analysis cost)
+- Whole-instance hide when every island is gone
+- Per-island hide when the cleaned mask has separate blobs (#8)
+- Score the **slot/chrome**, not icons / numbers / minimap fill
+- Small ROI, downscaled, ≤10 Hz, off the graphics thread
 - Hysteresis + fade
-- Manual visibility still wins
-
-## Test cases (examples, not a catalog)
-
-- WoW: `Alt+Z` or loading screen → action bar, meter, minimap cut-outs hide; they return in the world
-- WoW: pressing spells must **not** hide the action bar
-- NTE: menu / vehicle hides abilities; radar can stay (#8)
-- A game we have never authored a PNG for: highlight something, hide UI in-game, cut-out hides
+- Scene-item visibility still wins
 
 ## Out of scope
 
-- Morphing the mask every frame
-- Resizing Details-style meters (after v1, #12)
+- Auto-resize of islands (#12)
 - Guaranteeing zero false hides
+- Game memory
 
 ## Acceptance
 
-- [ ] Loading / hidden-HUD does not punch world through the cut-out
+- [ ] Auto-hide off: no extra CPU; cut-out still streams
+- [ ] Loading / hide-UI: no world punching through when auto-hide is on
 - [ ] Changing contents of a still-present bar does not flicker
-- [ ] Tunable threshold
+- [ ] Dual-canvas stream does not hitch vs cut-out-only

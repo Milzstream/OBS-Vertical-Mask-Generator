@@ -16,9 +16,11 @@ Technical scope: **any OBS source, any scene, any canvas.** Not Aitum-specific, 
 
 ## Runtime
 
-If that element is gone from the sampled source (loading, vehicle, `Alt+Z`, cutscene, …), this instance hides until it comes back. Hide is per instance (minimap can stay while abilities/meter hide).
+Cut-out always works. **Auto-hide is a checkbox, off by default.**
 
-Detect the **element**, not its contents (action-bar icons change; the bar is still there).
+When on: islands (disconnected blobs in one mask) hide independently if that blob is gone. Whole source hides if every island is gone. Detect the **element**, not its contents (icons/numbers changing should not hide a bar).
+
+If islands misbehave, use one HUD Mask per blob. Auto-resize of a blob that grew is after v1.
 
 ## Not doing
 

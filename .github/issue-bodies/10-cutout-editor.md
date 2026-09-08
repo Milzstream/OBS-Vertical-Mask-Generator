@@ -21,6 +21,7 @@ Rough highlight is the whole point. The user is not tracing in Photoshop and is 
 - Custom Qt dialog (stock `obs_properties` cannot host this)
 - Brush + erase
 - Cleanup inside a dilated box of the stroke (GrabCut / edge snap — spike one)
+- **Keep gaps** so separate blobs become islands for auto-hide (#8)
 - Feather
 - Re-edit later
 

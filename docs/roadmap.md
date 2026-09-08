@@ -1,48 +1,45 @@
 # Roadmap
 
-## Phase 0 — this repo (done)
+## MVP — cut-out
 
-Docs, issues, empty `src/`. No OBS binary.
+Highlight → cleanup → crop → placeable source. Auto-hide exists as a checkbox but can stay off. No Photoshop, no crop-filter stack.
 
-## Phase MVP — cut-out exists
+- Plugin bootstrap + CI (Windows installer, plugin zip, source zip)
+- Sample any source, masked draw
+- Cutout editor
+- Works on a vertical canvas and on a vanilla OBS scene
 
-**Goal:** Add source → pick what to sample → highlight a UI element on a live view → plugin cleans the highlight and crops → I can drag that cut-out around the vertical canvas.
+## v1 — optional auto-hide (public)
 
-- Bootstrap from obs-plugintemplate (OBS 32)
-- HUD Mask source that samples another source (scene / game capture / browser / …)
-- **Custom cutout editor** in the add/properties flow: live preview + highlighter + cleanup + crop
-- Transformable scene item on any OBS canvas (dogfood: Aitum Vertical)
-- Windows is the dogfood platform; CI still produces the usual OBS plugin artifacts (installer, plugin zip, source zip) and template macOS/Linux packages
-- Manual hide still works (stock visibility)
+- Auto-hide checkbox, **off by default**
+- Whole-instance hide when the element is gone
+- Per-island hide when the cleaned mask has separate blobs
+- Hysteresis + fade; signatures ignore changing fill
+- Document the fallback: one source per blob if islands misbehave
 
-**Exit:** I can recreate the WoW vertical layout (meter, minimap, action bar as three HUD Mask sources) **without** Photoshop, crop filters, or source clones. Cleanup does not have to be perfect; I can re-highlight.
-
-Existing PNG masks are **not** a requirement. They are a reference for how feathered cut-outs should look.
-
-## Phase v1 — hide when the UI is gone (public)
-
-**Goal:** The cut-out does not show world/loading/menu through a hole when that UI is missing. This is the “stable, share the repo” bar.
-
-- Presence of the **element**, not its contents (action-bar icons change; the bar is still there)
-- Per-instance hide (meter can hide, minimap can stay)
-- Hysteresis + fade so it does not flicker
-- Re-highlight from properties if I need to redo a mask
-- Windows installer from CI that drops files into the OBS plugins folder
-
-**Exit:** I can play WoW and NTE (and a third game we have never authored for) on vertical without toggling these sources by hand. Then the repo can go public.
+Public release when cut-out is reliable and auto-hide is safe to leave off (or on) without wrecking a stream.
 
 ## After v1
 
-Only if v1 is boringly usable:
+- Better cleanup (eraser, multiple strokes, fewer merged islands)
+- Experimental island resize (panel grew / circle got larger)
+- Tested macOS / Linux, not only CI packages
 
-- Better cleanup (tighter hugs, eraser, multiple strokes)
-- Mask that slowly updates if a panel resizes (Details meter growing in combat)
-- macOS / Linux as tested platforms, not just CI artifacts
+## Not doing
 
-## Killed / not doing
+- Motion-based UI discovery
+- Per-game mask libraries
+- Full-frame autodetect with no highlight
+- Auto-layout on the canvas
+- Shipping PNG files as the way to set up a game
 
-- Motion / “walk around while we detect UI”
-- A growing in-plugin database of games
-- Full-frame “find every HUD with no highlight”
-- Auto-layout of cut-outs on the vertical canvas
-- Shipping Photoshop PNGs as the way to set up a game
+## Issues
+
+| Phase | Issues |
+| --- | --- |
+| Epic | [#1](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/1) |
+| MVP | [#2](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/2) [#3](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/3) [#4](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/4) [#10](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/10) [#5](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/5) [#14](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/14) |
+| v1 | [#7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7) [#8](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/8) |
+| Later | [#12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) |
+| Research | [#15](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/15) |
+| Closed | [#6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6) [#9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) [#11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11) [#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) |

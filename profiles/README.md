@@ -1,7 +1,5 @@
-# Not a game database
+# Unused
 
-This folder was a leftover from an earlier idea (ship JSON packs per game). That is **not** the product.
+Game-pack JSON was an early idea and is not part of the product. Cut-out settings live on the HUD Mask source in the OBS scene collection.
 
-Cut-out settings (sampled source, mask, crop, presence signature) live on the HUD Mask source and persist in the OBS scene collection. There is no in-plugin list of games.
-
-This directory can be removed when we start the plugin bootstrap.
+Remove this directory when plugin bootstrap starts.
