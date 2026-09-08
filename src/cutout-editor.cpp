@@ -28,6 +28,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
+#include <QPolygon>
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QSlider>
@@ -37,6 +38,7 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <utility>
@@ -224,6 +226,220 @@ public:
 		update();
 	}
 
+	bool snapToEdges()
+	{
+		if (frame.isNull() || mask.isNull())
+			return false;
+
+		const int w = mask.width();
+		const int h = mask.height();
+		if (w < 8 || h < 8)
+			return false;
+
+		std::vector<uint8_t> user(static_cast<size_t>(w) * h, 0);
+		int painted = 0;
+		for (int y = 0; y < h; y++) {
+			const uint8_t *row = mask.constScanLine(y);
+			for (int x = 0; x < w; x++) {
+				if (row[x] >= 40) {
+					user[static_cast<size_t>(y) * w + x] = 1;
+					painted++;
+				}
+			}
+		}
+		if (painted < 40)
+			return false;
+
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h);
+		QImage rgb = frame.convertToFormat(QImage::Format_ARGB32);
+		for (int y = 0; y < h; y++) {
+			const QRgb *row = reinterpret_cast<const QRgb *>(rgb.constScanLine(y));
+			for (int x = 0; x < w; x++) {
+				const QRgb p = row[x];
+				lum[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>((77 * qRed(p) + 150 * qGreen(p) + 29 * qBlue(p)) >> 8);
+			}
+		}
+
+		std::vector<uint16_t> mag(static_cast<size_t>(w) * h, 0);
+		int maxMag = 1;
+		for (int y = 1; y < h - 1; y++) {
+			for (int x = 1; x < w - 1; x++) {
+				const int i = y * w + x;
+				const int gx = -lum[i - w - 1] - 2 * lum[i - 1] - lum[i + w - 1] + lum[i - w + 1] +
+					       2 * lum[i + 1] + lum[i + w + 1];
+				const int gy = -lum[i - w - 1] - 2 * lum[i - w] - lum[i - w + 1] + lum[i + w - 1] +
+					       2 * lum[i + w] + lum[i + w + 1];
+				const int m = std::abs(gx) + std::abs(gy);
+				mag[i] = static_cast<uint16_t>(m);
+				maxMag = std::max(maxMag, m);
+			}
+		}
+
+		std::vector<int> label(static_cast<size_t>(w) * h, 0);
+		int nlab = 0;
+		std::vector<int> stack;
+		stack.reserve(1024);
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const int start = y * w + x;
+				if (!user[start] || label[start])
+					continue;
+				nlab++;
+				stack.clear();
+				stack.push_back(start);
+				label[start] = nlab;
+				while (!stack.empty()) {
+					const int i = stack.back();
+					stack.pop_back();
+					const int px = i % w;
+					const int py = i / w;
+					const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < w ? i + 1 : -1,
+							   py > 0 ? i - w : -1, py + 1 < h ? i + w : -1};
+					for (int n : nb) {
+						if (n < 0 || !user[n] || label[n])
+							continue;
+						label[n] = nlab;
+						stack.push_back(n);
+					}
+				}
+			}
+		}
+
+		QImage snapped(w, h, QImage::Format_Grayscale8);
+		snapped.fill(0);
+		QPainter fill(&snapped);
+		fill.setRenderHint(QPainter::Antialiasing, true);
+		fill.setPen(Qt::NoPen);
+		fill.setBrush(Qt::white);
+
+		bool any = false;
+		for (int lab = 1; lab <= nlab; lab++) {
+			double sx = 0, sy = 0;
+			int count = 0;
+			double rmax = 0;
+			for (int i = 0; i < w * h; i++) {
+				if (label[i] != lab)
+					continue;
+				const int x = i % w;
+				const int y = i / w;
+				sx += x;
+				sy += y;
+				count++;
+			}
+			if (count < 40)
+				continue;
+			sx /= count;
+			sy /= count;
+			for (int i = 0; i < w * h; i++) {
+				if (label[i] != lab)
+					continue;
+				const double dx = (i % w) - sx;
+				const double dy = (i / w) - sy;
+				rmax = std::max(rmax, std::sqrt(dx * dx + dy * dy));
+			}
+			if (rmax < 6)
+				continue;
+
+			const int nrays = 256;
+			QPolygon poly;
+			poly.reserve(nrays);
+			for (int r = 0; r < nrays; r++) {
+				const double ang = (2.0 * 3.14159265358979323846 * r) / nrays;
+				const double c = std::cos(ang);
+				const double s = std::sin(ang);
+				int bestT = static_cast<int>(rmax);
+				int bestScore = -1;
+				const int t0 = std::max(2, static_cast<int>(rmax * 0.28));
+				const int t1 = static_cast<int>(rmax * 1.22);
+				for (int t = t0; t <= t1; t++) {
+					const int x = static_cast<int>(std::lround(sx + t * c));
+					const int y = static_cast<int>(std::lround(sy + t * s));
+					if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1)
+						break;
+					int score = mag[y * w + x];
+					if (!user[y * w + x] && t > static_cast<int>(rmax))
+						score /= 2;
+					if (score > bestScore) {
+						bestScore = score;
+						bestT = t;
+					}
+				}
+				if (bestScore < maxMag / 14)
+					bestT = static_cast<int>(rmax);
+				poly << QPoint(static_cast<int>(std::lround(sx + bestT * c)),
+					       static_cast<int>(std::lround(sy + bestT * s)));
+			}
+			fill.drawPolygon(poly);
+			any = true;
+		}
+		fill.end();
+
+		if (!any)
+			return false;
+
+		std::vector<uint8_t> bin(static_cast<size_t>(w) * h, 0);
+		for (int y = 0; y < h; y++) {
+			const uint8_t *row = snapped.constScanLine(y);
+			memcpy(bin.data() + static_cast<size_t>(y) * w, row, w);
+		}
+
+		const int feather = 6;
+		std::vector<int> dist(static_cast<size_t>(w) * h, 9999);
+		stack.clear();
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const int i = y * w + x;
+				if (bin[i] < 128)
+					continue;
+				bool border = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+				if (!border) {
+					border = bin[i - 1] < 128 || bin[i + 1] < 128 || bin[i - w] < 128 ||
+						 bin[i + w] < 128;
+				}
+				if (border) {
+					dist[i] = 0;
+					stack.push_back(i);
+				}
+			}
+		}
+		for (size_t qi = 0; qi < stack.size(); qi++) {
+			const int i = stack[qi];
+			const int nd = dist[i] + 1;
+			if (nd > feather)
+				continue;
+			const int px = i % w;
+			const int py = i / w;
+			const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < w ? i + 1 : -1, py > 0 ? i - w : -1,
+					   py + 1 < h ? i + w : -1};
+			for (int n : nb) {
+				if (n < 0 || bin[n] < 128 || dist[n] <= nd)
+					continue;
+				dist[n] = nd;
+				stack.push_back(n);
+			}
+		}
+
+		for (int y = 0; y < h; y++) {
+			uint8_t *row = mask.scanLine(y);
+			for (int x = 0; x < w; x++) {
+				const int i = y * w + x;
+				if (bin[i] < 128) {
+					row[x] = 0;
+					continue;
+				}
+				const int d = dist[i];
+				if (d >= feather)
+					row[x] = 255;
+				else
+					row[x] = static_cast<uint8_t>(d * 255 / feather);
+			}
+		}
+
+		update();
+		return true;
+	}
+
 protected:
 	void paintEvent(QPaintEvent *) override
 	{
@@ -236,17 +452,26 @@ protected:
 		p.drawImage(dest, frame);
 
 		if (!mask.isNull()) {
-			QImage overlay(mask.size(), QImage::Format_ARGB32_Premultiplied);
+			QImage overlay(mask.size(), QImage::Format_ARGB32);
 			overlay.fill(Qt::transparent);
 			for (int y = 0; y < mask.height(); y++) {
 				const uint8_t *src = mask.constScanLine(y);
 				QRgb *dst = reinterpret_cast<QRgb *>(overlay.scanLine(y));
+				const uint8_t *up = y > 0 ? mask.constScanLine(y - 1) : nullptr;
+				const uint8_t *dn = y + 1 < mask.height() ? mask.constScanLine(y + 1) : nullptr;
 				for (int x = 0; x < mask.width(); x++) {
-					const int a = src[x] * 110 / 255;
-					if (a)
-						dst[x] = qRgba(255, 210, 40, a);
+					if (!src[x])
+						continue;
+					const bool edge = x == 0 || x == mask.width() - 1 || !up || !dn ||
+							  src[x - 1] < 20 || src[x + 1] < 20 || up[x] < 20 ||
+							  dn[x] < 20;
+					if (edge)
+						dst[x] = qRgba(255, 255, 255, 230);
+					else
+						dst[x] = qRgba(255, 60, 180, src[x] * 90 / 255);
 				}
 			}
+			p.setCompositionMode(QPainter::CompositionMode_SourceOver);
 			p.drawImage(dest, overlay);
 		}
 
@@ -393,10 +618,13 @@ public:
 		brush->setRange(4, 96);
 		brush->setValue(canvas_->brush);
 
+		auto *snap = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snap")), this);
 		auto *refresh = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Refresh")), this);
 		auto *clear = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Clear")), this);
 		auto *ok = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Apply")), this);
 		auto *cancel = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Cancel")), this);
+		auto *status = new QLabel(QString::fromUtf8(obs_module_text("HUDMask.Editor.Hint")), this);
+		status->setWordWrap(true);
 
 		auto updateBrushLabel = [brushLabel, brush]() {
 			brushLabel->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Brush")) +
@@ -421,8 +649,17 @@ public:
 			updateBrushLabel();
 			canvas_->update();
 		});
+		connect(snap, &QPushButton::clicked, this, [this, status]() {
+			if (canvas_->snapToEdges())
+				status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snapped")));
+			else
+				status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.SnapFailed")));
+		});
 		connect(refresh, &QPushButton::clicked, this, [this]() { startCapture(false); });
-		connect(clear, &QPushButton::clicked, this, [this]() { canvas_->clearMask(); });
+		connect(clear, &QPushButton::clicked, this, [this, status]() {
+			canvas_->clearMask();
+			status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Hint")));
+		});
 		connect(ok, &QPushButton::clicked, this, [this]() { applyAndClose(); });
 		connect(cancel, &QPushButton::clicked, this, [this]() { reject(); });
 
@@ -431,6 +668,7 @@ public:
 		tools->addWidget(erase);
 		tools->addWidget(brushLabel);
 		tools->addWidget(brush, 1);
+		tools->addWidget(snap);
 		tools->addWidget(refresh);
 		tools->addWidget(clear);
 		tools->addStretch();
@@ -439,6 +677,7 @@ public:
 
 		auto *root = new QVBoxLayout(this);
 		root->addWidget(canvas_, 1);
+		root->addWidget(status);
 		root->addLayout(tools);
 
 		startCapture(true);
