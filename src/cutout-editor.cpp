@@ -203,6 +203,15 @@ public:
 	}
 
 	double zoom() const { return zoom_; }
+	void resetView()
+	{
+		zoom_ = 1.0;
+		if (!frame.isNull())
+			viewCenter_ = QPointF(frame.width() / 2.0, frame.height() / 2.0);
+		if (viewChanged)
+			viewChanged();
+		update();
+	}
 	void setSpaceDown(bool down)
 	{
 		spaceDown_ = down;
@@ -292,100 +301,159 @@ public:
 			}
 		}
 
-		/* Keep the painted silhouette. Only slide the local outline to a
-		 * nearby contrast peak — no circle/square fitting. */
-		struct SnapPt {
-			int x, y;
-			float nx, ny;
-			int t;
-		};
-		std::vector<SnapPt> snaps;
-		snaps.reserve(1024);
-		int minx = w, miny = h, maxx = 0, maxy = 0;
-		for (int y = 1; y < h - 1; y++) {
-			for (int x = 1; x < w - 1; x++) {
-				const int i = y * w + x;
-				if (!user[i])
+		std::vector<int> label(static_cast<size_t>(w) * h, 0);
+		int nlab = 0;
+		std::vector<int> stack;
+		stack.reserve(1024);
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const int start = y * w + x;
+				if (!user[start] || label[start])
 					continue;
-				minx = std::min(minx, x);
-				miny = std::min(miny, y);
-				maxx = std::max(maxx, x);
-				maxy = std::max(maxy, y);
-				if (user[i - 1] && user[i + 1] && user[i - w] && user[i + w])
-					continue;
-				float nx = 0, ny = 0;
-				for (int dy = -1; dy <= 1; dy++) {
-					for (int dx = -1; dx <= 1; dx++) {
-						if (dx == 0 && dy == 0)
+				nlab++;
+				stack.clear();
+				stack.push_back(start);
+				label[start] = nlab;
+				while (!stack.empty()) {
+					const int i = stack.back();
+					stack.pop_back();
+					const int px = i % w;
+					const int py = i / w;
+					const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < w ? i + 1 : -1, py > 0 ? i - w : -1,
+							   py + 1 < h ? i + w : -1};
+					for (int n : nb) {
+						if (n < 0 || !user[n] || label[n])
 							continue;
-						if (!user[(y + dy) * w + (x + dx)]) {
-							nx += static_cast<float>(dx);
-							ny += static_cast<float>(dy);
-						}
+						label[n] = nlab;
+						stack.push_back(n);
 					}
 				}
-				const float len = std::sqrt(nx * nx + ny * ny);
-				if (len < 0.5f)
-					continue;
-				nx /= len;
-				ny /= len;
-				int bestT = 0;
-				int bestS = mag[i];
-				const int inward = 10;
-				const int outward = 12;
-				for (int t = -inward; t <= outward; t++) {
-					const int xx = static_cast<int>(std::lround(x + t * nx));
-					const int yy = static_cast<int>(std::lround(y + t * ny));
-					if (xx <= 0 || yy <= 0 || xx >= w - 1 || yy >= h - 1)
-						continue;
-					const int s = mag[yy * w + xx];
-					if (s > bestS) {
-						bestS = s;
-						bestT = t;
-					}
-				}
-				if (bestS < maxMag / 18)
-					bestT = 0;
-				snaps.push_back({x, y, nx, ny, bestT});
 			}
 		}
-		if (snaps.empty())
-			return false;
 
-		const int pad = 16;
-		minx = std::max(0, minx - pad);
-		miny = std::max(0, miny - pad);
-		maxx = std::min(w - 1, maxx + pad);
-		maxy = std::min(h - 1, maxy + pad);
+		auto ringScore = [&](double cx, double cy, double r) -> int {
+			const int samples = 160;
+			int sum = 0;
+			int hit = 0;
+			for (int i = 0; i < samples; i++) {
+				const double a = (2.0 * 3.14159265358979323846 * i) / samples;
+				const int x = static_cast<int>(std::lround(cx + r * std::cos(a)));
+				const int y = static_cast<int>(std::lround(cy + r * std::sin(a)));
+				if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1)
+					continue;
+				sum += mag[y * w + x];
+				hit++;
+			}
+			return hit > samples / 2 ? sum / hit : 0;
+		};
 
 		std::vector<uint8_t> bin(static_cast<size_t>(w) * h, 0);
-		for (int y = miny; y <= maxy; y++) {
-			for (int x = minx; x <= maxx; x++) {
-				int bestD = 1 << 20;
-				int bestIdx = -1;
-				for (int si = 0; si < static_cast<int>(snaps.size()); si++) {
-					const int dx = x - snaps[si].x;
-					const int dy = y - snaps[si].y;
-					const int d = dx * dx + dy * dy;
-					if (d < bestD) {
-						bestD = d;
-						bestIdx = si;
+		QImage layer(w, h, QImage::Format_Grayscale8);
+		bool any = false;
+
+		for (int lab = 1; lab <= nlab; lab++) {
+			int count = 0, bx0 = w, by0 = h, bx1 = 0, by1 = 0, perim = 0;
+			double sx = 0, sy = 0;
+			std::vector<int> radii;
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					const int i = y * w + x;
+					if (label[i] != lab)
+						continue;
+					count++;
+					sx += x;
+					sy += y;
+					bx0 = std::min(bx0, x);
+					by0 = std::min(by0, y);
+					bx1 = std::max(bx1, x);
+					by1 = std::max(by1, y);
+					if (x == 0 || y == 0 || x == w - 1 || y == h - 1 || !label[i - 1] ||
+					    !label[i + 1] || !label[i - w] || !label[i + w] || label[i - 1] != lab ||
+					    label[i + 1] != lab || label[i - w] != lab || label[i + w] != lab)
+						perim++;
+				}
+			}
+			if (count < 40)
+				continue;
+			sx /= count;
+			sy /= count;
+			const int bw = bx1 - bx0 + 1;
+			const int bh = by1 - by0 + 1;
+			const double aspect = static_cast<double>(std::min(bw, bh)) / std::max(bw, bh);
+			const double fill = static_cast<double>(count) / (bw * bh);
+			const bool roundish = aspect >= 0.78 && fill >= 0.52;
+
+			layer.fill(0);
+			QPainter lp(&layer);
+			lp.setRenderHint(QPainter::Antialiasing, true);
+			lp.setPen(Qt::NoPen);
+			lp.setBrush(Qt::white);
+
+			if (roundish) {
+				for (int y = by0; y <= by1; y++) {
+					for (int x = bx0; x <= bx1; x++) {
+						if (label[y * w + x] != lab)
+							continue;
+						radii.push_back(static_cast<int>(std::lround(
+							std::hypot(x - sx, y - sy))));
 					}
 				}
-				if (bestIdx < 0)
-					continue;
-				const SnapPt &sp = snaps[bestIdx];
-				const float sx = sp.x + sp.t * sp.nx;
-				const float sy = sp.y + sp.t * sp.ny;
-				if ((x - sx) * sp.nx + (y - sy) * sp.ny <= 0.75f)
-					bin[y * w + x] = 255;
+				std::nth_element(radii.begin(), radii.begin() + radii.size() / 2, radii.end());
+				const int rMed = std::max(6, radii[radii.size() / 2]);
+				int bestR = rMed;
+				int bestS = -1;
+				const int r0 = std::max(6, static_cast<int>(rMed * 0.88));
+				const int r1 = static_cast<int>(rMed * 1.08);
+				for (int r = r0; r <= r1; r++) {
+					const int s = ringScore(sx, sy, r);
+					if (s > bestS) {
+						bestS = s;
+						bestR = r;
+					}
+				}
+				lp.drawEllipse(QPointF(sx, sy), bestR, bestR);
+			} else {
+				const int rad = 4;
+				for (int y = std::max(0, by0 - rad); y <= std::min(h - 1, by1 + rad); y++) {
+					for (int x = std::max(0, bx0 - rad); x <= std::min(w - 1, bx1 + rad); x++) {
+						bool hit = false;
+						for (int dy = -rad; dy <= rad && !hit; dy++) {
+							for (int dx = -rad; dx <= rad; dx++) {
+								if (dx * dx + dy * dy > rad * rad)
+									continue;
+								const int nx = x + dx;
+								const int ny = y + dy;
+								if (nx < 0 || ny < 0 || nx >= w || ny >= h)
+									continue;
+								if (label[ny * w + nx] == lab) {
+									hit = true;
+									break;
+								}
+							}
+						}
+						if (hit)
+							layer.scanLine(y)[x] = 255;
+					}
+				}
 			}
+			lp.end();
+
+			for (int y = 0; y < h; y++) {
+				const uint8_t *src = layer.constScanLine(y);
+				for (int x = 0; x < w; x++) {
+					if (src[x] >= 128)
+						bin[y * w + x] = 255;
+				}
+			}
+			any = true;
 		}
+
+		if (!any)
+			return false;
 
 		const int feather = 6;
 		std::vector<int> dist(static_cast<size_t>(w) * h, 9999);
-		std::vector<int> stack;
-		stack.reserve(1024);
+		stack.clear();
 		for (int y = 0; y < h; y++) {
 			for (int x = 0; x < w; x++) {
 				const int i = y * w + x;
@@ -543,6 +611,11 @@ protected:
 			e->accept();
 			return;
 		}
+		if (e->key() == Qt::Key_0 && e->modifiers() & Qt::ControlModifier) {
+			resetView();
+			e->accept();
+			return;
+		}
 		QWidget::keyPressEvent(e);
 	}
 
@@ -689,6 +762,7 @@ public:
 		brush->setRange(4, 96);
 		brush->setValue(canvas_->brush);
 
+		auto *resetZoom = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.ResetZoom")), this);
 		auto *snap = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snap")), this);
 		auto *refresh = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Refresh")), this);
 		auto *clear = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Clear")), this);
@@ -726,6 +800,7 @@ public:
 			updateBrushLabel();
 			canvas_->update();
 		});
+		connect(resetZoom, &QPushButton::clicked, this, [this]() { canvas_->resetView(); });
 		connect(snap, &QPushButton::clicked, this, [this, status]() {
 			if (canvas_->snapToEdges())
 				status->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snapped")));
@@ -746,6 +821,7 @@ public:
 		tools->addWidget(brushLabel);
 		tools->addWidget(brush, 1);
 		tools->addWidget(zoomLabel);
+		tools->addWidget(resetZoom);
 		tools->addWidget(snap);
 		tools->addWidget(refresh);
 		tools->addWidget(clear);
@@ -769,6 +845,11 @@ protected:
 	{
 		if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
 			canvas_->setSpaceDown(true);
+			e->accept();
+			return;
+		}
+		if (e->key() == Qt::Key_0 && e->modifiers() & Qt::ControlModifier) {
+			canvas_->resetView();
 			e->accept();
 			return;
 		}
