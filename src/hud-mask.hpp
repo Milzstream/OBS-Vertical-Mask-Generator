@@ -41,6 +41,9 @@ struct hud_mask {
 	bool presence_shown = true;
 	int presence_streak = 0;
 	float draw_alpha = 1.0f;
+	std::vector<uint8_t> presence_prev;
+	int presence_prev_w = 0;
+	int presence_prev_h = 0;
 
 	uint32_t src_cx = 0;
 	uint32_t src_cy = 0;

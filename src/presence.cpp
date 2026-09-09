@@ -106,24 +106,6 @@ void apply_score(hud_mask *ctx, float score)
 	}
 }
 
-void learn_from_luma(hud_mask *ctx, const std::vector<uint8_t> &luma, int w, int h)
-{
-	if (!ctx || w < 1 || h < 1)
-		return;
-	std::vector<uint8_t> band;
-	if (ctx->mask_w != w || ctx->mask_h != h || ctx->mask_gray.empty())
-		return;
-	const int inset = std::max(1, std::min(w, h) / 12);
-	mask_presence_band(ctx->mask_gray, &luma, w, h, inset, band);
-	ctx->ref_luma = luma;
-	ctx->ref_band = std::move(band);
-	ctx->ref_w = w;
-	ctx->ref_h = h;
-	ctx->ref_valid = true;
-	ctx->ref_capture_pending = false;
-	hud_mask_presence_save_ref(ctx, ctx->ref_luma.data(), ctx->mask_gray.data(), w, h);
-}
-
 void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_t ds_cx, uint32_t ds_cy,
 		  uint32_t src_cx, uint32_t src_cy)
 {
@@ -151,33 +133,28 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 		}
 	}
 
-	if (!ctx->ref_valid) {
-		if (ctx->mask_w < 1 || ctx->mask_h < 1)
-			return;
-		std::vector<uint8_t> luma;
-		mask_resize_luma(roi, rw, rh, luma, ctx->mask_w, ctx->mask_h);
-		learn_from_luma(ctx, luma, ctx->mask_w, ctx->mask_h);
-		ctx->presence_shown = true;
-		ctx->presence_streak = 0;
+	if (ctx->mask_w < 1 || ctx->mask_h < 1 || ctx->mask_gray.empty())
+		return;
+
+	std::vector<uint8_t> mask_s;
+	mask_resize_mask(ctx->mask_gray, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
+
+	const std::vector<uint8_t> *prev = nullptr;
+	if (ctx->presence_prev_w == rw && ctx->presence_prev_h == rh &&
+	    static_cast<int>(ctx->presence_prev.size()) == rw * rh)
+		prev = &ctx->presence_prev;
+
+	float score = 0;
+	if (!mask_presence_outline_score(mask_s, roi, prev, rw, rh, &score)) {
+		ctx->presence_prev = std::move(roi);
+		ctx->presence_prev_w = rw;
+		ctx->presence_prev_h = rh;
 		return;
 	}
-
-	/* Compare at the downsample crop size so a 3px fringe is not the whole signal. */
-	std::vector<uint8_t> ref_s;
-	std::vector<uint8_t> mask_s;
-	mask_resize_luma(ctx->ref_luma, ctx->ref_w, ctx->ref_h, ref_s, rw, rh);
-	if (ctx->mask_w > 0 && ctx->mask_h > 0 && !ctx->mask_gray.empty())
-		mask_resize_mask(ctx->mask_gray, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
-	else
-		mask_resize_mask(ctx->ref_band, ctx->ref_w, ctx->ref_h, mask_s, rw, rh);
-
-	const int inset = std::max(1, std::min(rw, rh) / 12);
-	std::vector<uint8_t> band;
-	mask_presence_band(mask_s, &ref_s, rw, rh, inset, band);
-	float score = 0;
-	if (!mask_presence_score(ref_s, roi, band, rw, rh, &score))
-		return;
 	apply_score(ctx, score);
+	ctx->presence_prev = std::move(roi);
+	ctx->presence_prev_w = rw;
+	ctx->presence_prev_h = rh;
 }
 
 void finish_job_on_graphics()
@@ -230,9 +207,7 @@ bool start_job()
 				continue;
 			if (!obs_source_showing(ctx->self))
 				continue;
-			if (ctx->mask_path.empty())
-				continue;
-			if (!ctx->ref_valid && !ctx->ref_capture_pending)
+			if (ctx->mask_path.empty() || ctx->mask_gray.empty())
 				continue;
 			if (ctx->target_name.empty())
 				continue;

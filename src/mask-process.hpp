@@ -77,5 +77,14 @@ void mask_resize_mask(const std::vector<uint8_t> &src, int src_w, int src_h, std
 bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
 			 const std::vector<uint8_t> &band, int width, int height, float *score);
 
+/* 1px outline of the painted blob (mask >= 20). */
+void mask_blob_outline(const std::vector<uint8_t> &mask, int width, int height, std::vector<uint8_t> &outline);
+
+/* Fraction of the painted outline that still sits on a live edge. Tries a few
+ * smaller scales so an empty slot (same shape, smaller) still scores. If
+ * prev_luma is set, edges that moved with the world are down-weighted. */
+bool mask_presence_outline_score(const std::vector<uint8_t> &mask, const std::vector<uint8_t> &cur_luma,
+				 const std::vector<uint8_t> *prev_luma, int width, int height, float *score);
+
 /* Map a 0–100 match slider to a hide threshold. 0 is lenient, 100 is strict. */
 float mask_presence_threshold(int match_percent);
