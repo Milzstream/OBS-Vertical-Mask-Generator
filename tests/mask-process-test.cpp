@@ -400,8 +400,10 @@ int main()
 		CHECK(near_outer * 2 > static_cast<int>(snapped.size()));
 	}
 
-	CHECK(mask_presence_threshold(0) >= 0.21f && mask_presence_threshold(0) <= 0.23f);
-	CHECK(mask_presence_threshold(100) >= 0.77f && mask_presence_threshold(100) <= 0.79f);
+	CHECK(mask_presence_threshold(0) == 0.0f);
+	CHECK(mask_presence_threshold(50) == 0.5f);
+	CHECK(mask_presence_threshold(80) == 0.8f);
+	CHECK(mask_presence_threshold(100) == 1.0f);
 	CHECK(mask_presence_threshold(50) > mask_presence_threshold(0));
 	CHECK(mask_presence_threshold(50) < mask_presence_threshold(100));
 
