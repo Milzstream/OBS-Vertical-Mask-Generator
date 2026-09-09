@@ -93,14 +93,24 @@ void destroy_job(Job *job)
 void apply_score(hud_mask *ctx, float score)
 {
 	const float thresh = mask_presence_threshold(ctx->match_pct);
-	const bool want = score >= thresh;
+	/* Must clear a small gap past the line so 0.49/0.53 cannot chatter. */
+	const float show_need = std::min(0.95f, thresh + 0.04f);
+	const float hide_need = std::max(0.0f, thresh - 0.04f);
+	bool want = ctx->presence_shown;
+	if (ctx->presence_shown) {
+		if (score < hide_need)
+			want = false;
+	} else if (score >= show_need) {
+		want = true;
+	}
 	if (want == ctx->presence_shown) {
 		ctx->presence_streak = 0;
 		return;
 	}
 	ctx->presence_streak++;
 	if (ctx->presence_streak >= k_hysteresis) {
-		obs_log(LOG_INFO, "auto-hide %s (score %.2f, need %.2f)", want ? "show" : "hide", score, thresh);
+		obs_log(LOG_INFO, "auto-hide %s (score %.2f, hide below %.2f, show at %.2f)",
+			want ? "show" : "hide", score, hide_need, show_need);
 		ctx->presence_shown = want;
 		ctx->presence_streak = 0;
 	}

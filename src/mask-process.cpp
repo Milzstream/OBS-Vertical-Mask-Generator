@@ -804,8 +804,8 @@ float mask_presence_threshold(int match_percent)
 		match_percent = 0;
 	if (match_percent > 100)
 		match_percent = 100;
-	/* 0 → 0.15 (lenient), 50 → 0.32, 100 → 0.50 */
-	return 0.15f + 0.35f * (static_cast<float>(match_percent) / 100.0f);
+	/* 0 → 0.22 (lenient), 50 → 0.50, 100 → 0.78 (inventory-like UI should not pass). */
+	return 0.22f + 0.56f * (static_cast<float>(match_percent) / 100.0f);
 }
 
 void mask_blob_outline(const std::vector<uint8_t> &mask, int width, int height, std::vector<uint8_t> &outline)
