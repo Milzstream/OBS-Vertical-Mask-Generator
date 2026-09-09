@@ -58,6 +58,11 @@ VersionInfoDescription={#MyAppName} OBS plugin
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[InstallDelete]
+Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\vertical-hud-mask.dll"
+Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\vertical-hud-mask.pdb"
+Type: filesandordirs; Name: "{pf}\obs-studio\data\obs-plugins\vertical-hud-mask"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

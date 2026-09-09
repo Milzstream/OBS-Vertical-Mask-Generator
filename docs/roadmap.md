@@ -1,30 +1,28 @@
 # Roadmap
 
-## MVP — cut-out
+## Shipped
 
-Highlight → cleanup → crop → placeable source. Auto-hide exists as a checkbox but can stay off. No Photoshop, no crop-filter stack.
+Highlight → optional snap → crop → placeable source. Windows installer to `%ProgramData%\obs-studio\plugins\`, portable zip, launch-time GitHub update check.
 
-- Plugin bootstrap + CI (Windows installer, plugin zip, source zip)
-- Sample any source, masked draw
-- Cutout editor
+- Plugin bootstrap + CI
+- Sample any source or scene, masked draw
+- Cutout editor (paint, line, fill, Magic Select, Snap Edges)
 - Works on a vertical canvas and on a vanilla OBS scene
 
-## v1 — optional auto-hide (public)
+## Next — optional auto-hide
+
+[#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20)
 
 - Auto-hide checkbox, **off by default**
 - Whole-instance hide when the element is gone
-- Per-island hide when the cleaned mask has separate blobs
 - **One shared presence cycle** for all visible auto-hide masks (grouped by sampled source)
-- **Split into N sources** when cleanup finds multiple islands
 - Hysteresis + fade; signatures ignore changing fill
 
-Public release when cut-out is reliable and auto-hide is safe to leave off (or on) without wrecking a stream.
+Per-island hide inside one mask is a follow-up, not the first slice.
 
-## After v1
+## Later
 
-- Better cleanup (eraser, multiple strokes, fewer merged islands)
 - macOS / Linux builds and installers
-- clang-format / CMake format checks in CI
 
 ## Not doing
 
@@ -34,13 +32,10 @@ Public release when cut-out is reliable and auto-hide is safe to leave off (or o
 - Auto-layout on the canvas
 - Auto-resize of islands when HUD chrome grows/shrinks
 - Shipping PNG files as the way to set up a game
+- Split into N sources (closed; use one HUD Mask per element)
 
 ## Issues
 
-| Phase | Issues |
+| Status | Issues |
 | --- | --- |
-| Epic | [#1](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/1) |
-| MVP | [#2](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/2) [#3](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/3) [#4](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/4) [#10](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/10) [#5](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/5) [#14](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/14) |
-| v1 | [#7](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/7) [#8](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/8) [#16](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/16) |
-| Research | [#15](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/15) |
-| Closed | [#6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/6) [#9](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/9) [#11](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/11) [#12](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/12) [#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13) |
+| Next | [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20) auto-hide |

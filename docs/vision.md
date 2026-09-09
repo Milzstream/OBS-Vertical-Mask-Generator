@@ -15,47 +15,46 @@ Today that means source clone + crop filter + a handmade black-and-white PNG + I
 
 A new OBS source, **HUD Mask**.
 
-It samples any other source, lets the user highlight an element on a live view, turns that highlight into a cropped alpha cut-out, and is placed like any scene item. Optional auto-hide makes the cut-out transparent when that element is no longer in the sampled source.
+It samples any other source, lets the user highlight an element on a live view, turns that highlight into a cropped alpha cut-out, and is placed like any scene item.
 
-It is **not** Aitum-specific and **not** vertical-specific. Aitum Vertical is the intended canvas, not a dependency.
+It is **not** Aitum-specific and **not** vertical-specific. Aitum Vertical is the intended canvas, not a dependency. There is no in-plugin list of games.
+
+Optional **auto-hide** (not shipped) will make the cut-out transparent when that element is no longer in the sampled source. It will be a checkbox, off by default, so a bad detector never makes the source worse than a static PNG. See [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20).
 
 ## Setup
 
 1. Add HUD Mask on any scene.
-2. Choose the source to sample.
-3. Highlight the element (rough is enough).
-4. Cleanup hugs the chrome and crops to the mask.
-5. The user drags and scales the item.
+2. Choose the source (or scene + canvas) to sample.
+3. Highlight the element (rough is enough): paint, line, fill, or Magic Select.
+4. Snap Edges if you want the paint pulled onto chrome. Apply crops to the mask.
+5. Drag and scale the item.
 
-One instance can cover several disconnected blobs (islands) from a single highlight. If those blobs should be independent scene items, **Split into N sources** does that in one click. There is no in-plugin list of games.
+One instance is one cut-out. Use more HUD Masks for more elements (**Same Masks** lists the others on that target).
 
 ## Runtime
 
-**Cut-out always works.** Auto-hide is a checkbox, off by default, so a bad detector never makes the source worse than a static PNG.
+**Cut-out always works.** Manual scene-item visibility always still works.
 
-When auto-hide is on:
+When auto-hide ships and is on:
 
 - Presence is about the **element**, not the artwork inside it (cooldowns and meter numbers should not hide a bar).
-- **Islands** in one mask can hide independently (one of three ability circles gone → only that circle drops).
 - All visible auto-hide masks are scored in **one shared cycle** (minimap and abilities together, not a timer per source). Hidden items are skipped.
-- If islands are a poor fit, **Split into N sources** from the editor. If a layout changes size, re-open the editor. The plugin does not auto-resize masks.
-
-Manual scene-item visibility always still works.
 
 ## Success
 
-v1 is usable when:
+The cut-out is usable when:
 
-1. Highlight → cleanup → crop produces a cut-out good enough to stream, with no Photoshop.
+1. Highlight → optional snap → crop produces a cut-out good enough to stream, with no Photoshop.
 2. The item can live on a vertical canvas or a normal OBS scene.
-3. Auto-hide is optional and, when enabled, does not punch world through a hole on loading screens / hidden HUD, without flickering on changing icons.
-4. Dual-canvas streaming does not hitch.
+
+Auto-hide is a later bar: optional, and when enabled it does not punch world through a hole on loading screens / hidden HUD, without flickering on changing icons, and without hitching a dual-canvas stream.
 
 ## Non-goals
 
 - A catalog of games or shipped mask files
 - Motion / “walk around while we detect UI”
 - Auto-placing items on the canvas
+- Auto-resize of islands when HUD chrome grows
 - Building the rest of the vertical scene (world crop, cam, alerts, chat, branding)
 - Game memory, injection, or Aitum-private APIs
 - A paid product or telemetry

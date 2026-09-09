@@ -1,6 +1,8 @@
 #include "mask-process.hpp"
 #include "update-parse.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -94,12 +96,6 @@ int main()
 		CHECK(core);
 		CHECK(outside);
 	}
-
-	CHECK(mask_is_roundish(100, 100, 7800));
-	CHECK(!mask_is_roundish(200, 40, 7000));
-	CHECK(!mask_is_roundish(0, 10, 1));
-	CHECK(mask_circle_radius_from_bounds(100, 100) == 50);
-	CHECK(mask_circle_radius_from_bounds(80, 100) == 40);
 
 	/* Binarize splits at the threshold. */
 	{
@@ -299,6 +295,109 @@ int main()
 		mask_find_windows_asset(json, asset);
 		CHECK(asset.size() >= 4 && asset.compare(asset.size() - 4, 4, ".exe") == 0);
 		CHECK(asset.find("windows") != std::string::npos);
+	}
+
+	/* Crop insets come from the opaque bbox plus pad. */
+	{
+		auto g = filled_square(32, 32, 8, 8, 15, 15);
+		const MaskCrop c = mask_crop_from_opaque(g, 32, 32, 20, 2);
+		CHECK(!c.empty);
+		CHECK(c.min_x == 6 && c.min_y == 6);
+		CHECK(c.max_x == 17 && c.max_y == 17);
+		CHECK(c.left == 6 && c.top == 6);
+		CHECK(c.right == 14 && c.bottom == 14);
+		std::vector<uint8_t> empty(static_cast<size_t>(8) * 8, 0);
+		CHECK(mask_crop_from_opaque(empty, 8, 8, 20, 32).empty);
+	}
+
+	/* Snap a painted ring onto a high-contrast box, not an inner icon. */
+	{
+		const int w = 64, h = 64;
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h, 0);
+		for (int y = 12; y <= 51; y++) {
+			for (int x = 12; x <= 51; x++) {
+				const bool frame = x <= 14 || x >= 49 || y <= 14 || y >= 49;
+				if (frame)
+					lum[static_cast<size_t>(y) * w + x] = 255;
+			}
+		}
+		for (int y = 30; y <= 33; y++)
+			for (int x = 30; x <= 33; x++)
+				lum[static_cast<size_t>(y) * w + x] = 255;
+
+		std::vector<uint8_t> user(static_cast<size_t>(w) * h, 0);
+		for (int y = 10; y <= 53; y++) {
+			for (int x = 10; x <= 53; x++) {
+				const bool ring = x <= 16 || x >= 47 || y <= 16 || y >= 47;
+				if (ring)
+					user[static_cast<size_t>(y) * w + x] = 255;
+			}
+		}
+
+		std::vector<uint8_t> out;
+		CHECK(mask_snap_edges(user, lum, w, h, 8, out));
+		CHECK(static_cast<int>(out.size()) == w * h);
+
+		int minx = w, miny = h, maxx = -1, maxy = -1;
+		int opaque = 0;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				if (out[static_cast<size_t>(y) * w + x] < 128)
+					continue;
+				opaque++;
+				minx = std::min(minx, x);
+				miny = std::min(miny, y);
+				maxx = std::max(maxx, x);
+				maxy = std::max(maxy, y);
+			}
+		}
+		CHECK(opaque > 200);
+		CHECK(minx <= 16 && miny <= 16);
+		CHECK(maxx >= 47 && maxy >= 47);
+		CHECK(!(minx >= 28 && maxx <= 36 && miny >= 28 && maxy <= 36));
+		CHECK(out[static_cast<size_t>(2) * w + 2] < 128);
+	}
+
+	/* Magic loop around a filled rectangle hugs the outer edge, not an inner hole. */
+	{
+		const int w = 64, h = 64;
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h, 0);
+		for (int y = 16; y <= 47; y++)
+			for (int x = 16; x <= 47; x++)
+				lum[static_cast<size_t>(y) * w + x] = 255;
+		for (int y = 26; y <= 37; y++)
+			for (int x = 26; x <= 37; x++)
+				lum[static_cast<size_t>(y) * w + x] = 0;
+
+		std::vector<MaskPoint> loop = {{8.f, 8.f}, {55.f, 8.f}, {55.f, 55.f}, {8.f, 55.f},
+					       {8.f, 8.f}};
+		/* densify a bit so shrinkwrap has enough samples */
+		std::vector<MaskPoint> dense;
+		for (size_t i = 1; i < loop.size(); i++) {
+			for (int k = 0; k < 16; k++) {
+				const float t = static_cast<float>(k) / 16.f;
+				dense.push_back({loop[i - 1].x + t * (loop[i].x - loop[i - 1].x),
+						 loop[i - 1].y + t * (loop[i].y - loop[i - 1].y)});
+			}
+		}
+		std::vector<MaskPoint> snapped;
+		CHECK(mask_magic_shrinkwrap(dense, lum, w, h, 18, snapped));
+		CHECK(snapped.size() >= 8);
+
+		int near_outer = 0;
+		int in_hole = 0;
+		for (const MaskPoint &pt : snapped) {
+			const int x = static_cast<int>(std::lround(pt.x));
+			const int y = static_cast<int>(std::lround(pt.y));
+			if (x >= 26 && x <= 37 && y >= 26 && y <= 37)
+				in_hole++;
+			const int d_outer = std::min(std::min(std::abs(x - 16), std::abs(x - 47)),
+						     std::min(std::abs(y - 16), std::abs(y - 47)));
+			if (d_outer <= 4)
+				near_outer++;
+		}
+		CHECK(in_hole == 0);
+		CHECK(near_outer * 2 > static_cast<int>(snapped.size()));
 	}
 
 	if (g_fails) {

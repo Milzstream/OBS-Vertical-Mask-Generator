@@ -17,103 +17,53 @@ OBS plugin (C++/Qt), new **input source**. GPL-2.0-or-later.
 ```
 Add Source → HUD Mask → name it
         ↓
-┌─────────────────────────────────────────┐
-│  Sample: [ Game Capture          ▼ ]    │
-│                                         │
-│  ┌─────────────────────────────────┐    │
-│  │  live view of sampled source    │    │
-│  │  highlighter over the element   │    │
-│  └─────────────────────────────────┘    │
-│  highlight · erase · reset · cleanup    │
-│                           [ OK ]        │
-└─────────────────────────────────────────┘
+Properties: Type, Canvas (if Scene), target, Same Masks, Draw mask…, Expand, Feather
         ↓
-source size = bounding box of the cleaned mask
+Draw mask editor
+  live (or paused) view of the sampled source
+  Mask / Erase · Circle · Square · Line · Fill · Magic Select
+  Snap Edges · Undo · Refresh · Clear
+  Apply
+        ↓
+source size = opaque bbox of the mask plus 32px pad
 user transforms the scene item
 ```
 
-The normal properties sheet is small: sampled source, **Edit cutout…**, feather, invert, **Auto-hide** checkbox. If cleanup found more than one island, **Split into N sources**.
-
-## Mask islands
-
-After cleanup, the mask is labeled into **connected components** (islands). A highlight over three separate ability circles should yield three islands. A single solid panel is one island.
-
-Each island stores:
-
-- Pixel mask
-- Bounding box (in the crop)
-- Presence signature (chrome, not fill)
-
-The scene item’s size stays the **full crop**. Hidden islands become transparent holes; the item does not jump on the canvas.
-
-If cleanup merges blobs that should stay separate, the user either tightens the highlight or uses **Split into N sources**.
-
-### Split into N sources
-
-Setup-time only. If the cleaned mask has 3 islands, the editor can offer one click: create three HUD Mask sources (same sampled target, one island each), place them so the composite still lines up, remove the original combined source. Each can then hide, move, and scale on its own without highlighting the bar three times.
-
-That is the preferred way to get independent control. It costs nothing at stream time.
+The properties sheet is small. Crop insets and the mask PNG path are stored on the source but not shown. There is no invert control and no Split into N.
 
 ## Runtime
 
 ```
 Every frame (GPU), per visible HUD Mask
   sample target into a texrender
-  draw crop through the current mask
-  (optional) zero alpha on islands scored absent
+  draw the crop through the current mask (expand / feather already baked or applied)
 ```
 
-### Shared presence cycle (not per source)
+No presence analysis. Auto-hide is stored as `auto_hide` (default off) and is not used yet. See [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20).
 
-Auto-hide is **one plugin-wide pass**, not a timer on each mask.
+## Highlight tools (setup only)
 
-```
-Every ~100–200 ms, if any visible HUD Mask has auto-hide on:
+User paint is the mask. Optional **Snap Edges** walks the painted border and pulls it onto nearby frame contrast (any color). **Magic Select** shrinkwraps a rough loop onto the outer edge. **Fill** floods an outline and swallows the ring. None of this runs at 60 fps.
 
-  1. Collect instances that are
-     - auto-hide enabled
-     - visible as a scene item on an active canvas
-  2. Group them by sampled target (minimap + abilities on Game Capture = one group)
-  3. For each unique target: one downsample / readback
-  4. Score every island in that group from the same buffer
-  5. Push present/absent back to each instance (hysteresis + fade)
-```
-
-Hidden items, inactive scenes, and auto-hide-off sources are skipped. Adding a fifth mask that samples the same game capture should not add another GPU readback.
-
-Presence matches the **slot/frame**, not icons, numbers, or minimap terrain.
-
-## Highlight cleanup (setup only)
-
-User stroke = foreground seed, inside a dilated box of the paint:
-
-1. GrabCut / watershed / edge snap (spike one, keep it if it hugs chrome).
-2. Morphology + feather.
-3. Connected-component islands.
-4. Crop = bounding box of remaining alpha.
-
-Runs on a snapshot or paused frame when the user asks, never at 60 fps.
+Crop = bounding box of remaining opaque pixels, padded 32px. Mask PNG is saved at crop size under the plugin config directory.
 
 ## Persistence
 
 On the source:
 
-- Target source name/uuid
+- Target kind, canvas uuid, source name
 - Crop rect
-- Mask (and island list)
-- Per-island presence signatures
-- Feather, invert, auto-hide on/off
+- Mask PNG path
+- Expand, feather
+- `auto_hide` (unused)
 
 ## Performance budget
 
 All HUD Mask instances combined should cost less than an extra game capture.
 
-- **Draw:** GPU sample + small masked blit per visible instance (same order as today’s clones).
-- **Auto-hide off:** no analysis.
-- **Auto-hide on:** one cycle for the whole plugin. GPU cost scales with **unique sampled targets that are visible**, not with mask count. CPU scores small ROIs from that buffer. ≤10 Hz. Nothing on the graphics hot path. No extra full-res 4K readback per mask.
-- **Cleanup / split:** editor only.
-
-If presence cannot stay in that budget, it stays off and the cut-out still works.
+- **Draw:** GPU sample + small masked blit per visible instance (same order as a source clone + crop).
+- **Auto-hide off (always, today):** no analysis.
+- **Editor tools:** snapshot or paused frame only.
 
 ## Stream Suite
 
@@ -121,6 +71,7 @@ Normal OBS source. Intended placement: extra (vertical) canvas, sampling a main-
 
 ## Safety
 
-- No injection, game memory, network, or telemetry
-- Auto-hide off by default
+- No injection, game memory, or telemetry
+- GitHub `/releases/latest` only, for the optional update prompt
+- Auto-hide will be off by default when it ships
 - Scene-item visibility still overrides

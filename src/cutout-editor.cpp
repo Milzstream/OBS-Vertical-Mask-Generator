@@ -391,30 +391,10 @@ public:
 			undoChanged();
 	}
 
-	bool snapEdges()
+	std::vector<uint8_t> frameLuma() const
 	{
-		if (frame.isNull() || mask.isNull())
-			return false;
-
-		const int w = mask.width();
-		const int h = mask.height();
-		if (w < 8 || h < 8)
-			return false;
-
-		std::vector<uint8_t> user(static_cast<size_t>(w) * h, 0);
-		int painted = 0;
-		for (int y = 0; y < h; y++) {
-			const uint8_t *row = mask.constScanLine(y);
-			for (int x = 0; x < w; x++) {
-				if (row[x] >= 40) {
-					user[static_cast<size_t>(y) * w + x] = 1;
-					painted++;
-				}
-			}
-		}
-		if (painted < 40)
-			return false;
-
+		const int w = frame.width();
+		const int h = frame.height();
 		std::vector<uint8_t> lum(static_cast<size_t>(w) * h);
 		QImage rgb = frame.convertToFormat(QImage::Format_ARGB32);
 		for (int y = 0; y < h; y++) {
@@ -425,194 +405,25 @@ public:
 					static_cast<uint8_t>((77 * qRed(p) + 150 * qGreen(p) + 29 * qBlue(p)) >> 8);
 			}
 		}
+		return lum;
+	}
 
-		std::vector<uint16_t> mag(static_cast<size_t>(w) * h, 0);
-		int maxMag = 1;
-		for (int y = 1; y < h - 1; y++) {
-			for (int x = 1; x < w - 1; x++) {
-				const int i = y * w + x;
-				const int gx = -lum[i - w - 1] - 2 * lum[i - 1] - lum[i + w - 1] + lum[i - w + 1] +
-					       2 * lum[i + 1] + lum[i + w + 1];
-				const int gy = -lum[i - w - 1] - 2 * lum[i - w] - lum[i - w + 1] + lum[i + w - 1] +
-					       2 * lum[i + w] + lum[i + w + 1];
-				const int m = std::abs(gx) + std::abs(gy);
-				mag[i] = static_cast<uint16_t>(m);
-				maxMag = std::max(maxMag, m);
-			}
-		}
-
-		std::vector<int> label(static_cast<size_t>(w) * h, 0);
-		int nlab = 0;
-		std::vector<int> stack;
-		stack.reserve(1024);
-		for (int y = 0; y < h; y++) {
-			for (int x = 0; x < w; x++) {
-				const int start = y * w + x;
-				if (!user[start] || label[start])
-					continue;
-				nlab++;
-				stack.clear();
-				stack.push_back(start);
-				label[start] = nlab;
-				while (!stack.empty()) {
-					const int i = stack.back();
-					stack.pop_back();
-					const int px = i % w;
-					const int py = i / w;
-					const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < w ? i + 1 : -1, py > 0 ? i - w : -1,
-							   py + 1 < h ? i + w : -1};
-					for (int n : nb) {
-						if (n < 0 || !user[n] || label[n])
-							continue;
-						label[n] = nlab;
-						stack.push_back(n);
-					}
-				}
-			}
-		}
-
-		std::vector<uint8_t> bin(static_cast<size_t>(w) * h, 0);
-		bool any = false;
-		const int search = std::max(4, std::min(8, brush / 4));
-		const int thresh = std::max(28, maxMag / 3);
-
-		for (int lab = 1; lab <= nlab; lab++) {
-			int count = 0;
-			double sx = 0, sy = 0;
-			int bx0 = w, by0 = h, bx1 = 0, by1 = 0;
-			for (int y = 0; y < h; y++) {
-				for (int x = 0; x < w; x++) {
-					if (label[y * w + x] != lab)
-						continue;
-					count++;
-					sx += x;
-					sy += y;
-					bx0 = std::min(bx0, x);
-					by0 = std::min(by0, y);
-					bx1 = std::max(bx1, x);
-					by1 = std::max(by1, y);
-				}
-			}
-			if (count < 40)
-				continue;
-
-			const double cx = sx / count;
-			const double cy = sy / count;
-			QPolygonF poly;
-			const int rays = 160;
-			for (int i = 0; i < rays; i++) {
-				const double a = (2.0 * 3.14159265358979323846 * i) / rays;
-				const double dx = std::cos(a);
-				const double dy = std::sin(a);
-				int exitT = -1;
-				const int maxT = std::max(8, std::max(bx1 - bx0, by1 - by0));
-				for (int t = 0; t <= maxT + search; t++) {
-					const int x = static_cast<int>(std::lround(cx + dx * t));
-					const int y = static_cast<int>(std::lround(cy + dy * t));
-					if (x < 0 || y < 0 || x >= w || y >= h)
-						break;
-					if (label[y * w + x] == lab)
-						exitT = t;
-				}
-				if (exitT < 0)
-					continue;
-				int bestT = exitT;
-				double bestScore = -1;
-				for (int t = std::max(0, exitT - search); t <= exitT + search; t++) {
-					const int x = static_cast<int>(std::lround(cx + dx * t));
-					const int y = static_cast<int>(std::lround(cy + dy * t));
-					if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1)
-						continue;
-					const int m = mag[y * w + x];
-					const double fall = 1.0 - 0.8 * std::abs(t - exitT) / (double)search;
-					const double score = m * fall;
-					if (score > bestScore) {
-						bestScore = score;
-						bestT = t;
-					}
-				}
-				if (bestScore < thresh)
-					bestT = exitT;
-				poly << QPointF(cx + dx * bestT, cy + dy * bestT);
-			}
-			if (poly.size() < 8)
-				continue;
-
-			QImage layer(w, h, QImage::Format_Grayscale8);
-			layer.fill(0);
-			QPainter lp(&layer);
-			lp.setRenderHint(QPainter::Antialiasing, true);
-			lp.setPen(Qt::NoPen);
-			lp.setBrush(Qt::white);
-			lp.drawPolygon(poly);
-			lp.end();
-			for (int y = by0; y <= by1; y++) {
-				const uint8_t *src = layer.constScanLine(y);
-				for (int x = bx0; x <= bx1; x++) {
-					if (src[x] >= 128)
-						bin[y * w + x] = 255;
-				}
-			}
-			any = true;
-		}
-
-		if (!any)
+	bool snapEdges()
+	{
+		if (frame.isNull() || mask.isNull())
 			return false;
-
+		const int w = mask.width();
+		const int h = mask.height();
+		std::vector<uint8_t> user(static_cast<size_t>(w) * h);
+		for (int y = 0; y < h; y++)
+			memcpy(user.data() + static_cast<size_t>(y) * w, mask.constScanLine(y), static_cast<size_t>(w));
+		std::vector<uint8_t> out;
+		const int search = std::max(4, std::min(8, brush / 4));
+		if (!mask_snap_edges(user, frameLuma(), w, h, search, out))
+			return false;
 		pushUndo();
-
-		const int feather = 3;
-		std::vector<int> dist(static_cast<size_t>(w) * h, 9999);
-		stack.clear();
-		for (int y = 0; y < h; y++) {
-			for (int x = 0; x < w; x++) {
-				const int i = y * w + x;
-				if (bin[i] < 128)
-					continue;
-				bool border = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-				if (!border) {
-					border = bin[i - 1] < 128 || bin[i + 1] < 128 || bin[i - w] < 128 ||
-						 bin[i + w] < 128;
-				}
-				if (border) {
-					dist[i] = 0;
-					stack.push_back(i);
-				}
-			}
-		}
-		for (size_t qi = 0; qi < stack.size(); qi++) {
-			const int i = stack[qi];
-			const int nd = dist[i] + 1;
-			if (nd > feather)
-				continue;
-			const int px = i % w;
-			const int py = i / w;
-			const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < w ? i + 1 : -1, py > 0 ? i - w : -1,
-					   py + 1 < h ? i + w : -1};
-			for (int n : nb) {
-				if (n < 0 || bin[n] < 128 || dist[n] <= nd)
-					continue;
-				dist[n] = nd;
-				stack.push_back(n);
-			}
-		}
-
-		for (int y = 0; y < h; y++) {
-			uint8_t *row = mask.scanLine(y);
-			for (int x = 0; x < w; x++) {
-				const int i = y * w + x;
-				if (bin[i] < 128) {
-					row[x] = 0;
-					continue;
-				}
-				const int d = dist[i];
-				if (d >= feather)
-					row[x] = 255;
-				else
-					row[x] = static_cast<uint8_t>(d * 255 / feather);
-			}
-		}
-
+		for (int y = 0; y < h; y++)
+			memcpy(mask.scanLine(y), out.data() + static_cast<size_t>(y) * w, static_cast<size_t>(w));
 		update();
 		return true;
 	}
@@ -1083,129 +894,23 @@ private:
 	{
 		if (frame.isNull() || mask.isNull() || magicPath_.size() < 8)
 			return;
-		const int w = mask.width();
-		const int h = mask.height();
-
-		QPolygonF path = magicPath_;
-		if (QLineF(path.front(), path.back()).length() > 3)
-			path << path.front();
-		QPolygonF dense;
-		const double spacing = 3.0;
-		for (int i = 1; i < path.size(); i++) {
-			QLineF seg(path[i - 1], path[i]);
-			const int n = std::max(1, static_cast<int>(seg.length() / spacing));
-			for (int k = 0; k < n; k++)
-				dense << seg.pointAt(k / static_cast<double>(n));
-		}
-		if (dense.size() < 8)
+		std::vector<MaskPoint> loop;
+		loop.reserve(static_cast<size_t>(magicPath_.size()));
+		for (const QPointF &pt : magicPath_)
+			loop.push_back({static_cast<float>(pt.x()), static_cast<float>(pt.y())});
+		std::vector<MaskPoint> snapped;
+		if (!mask_magic_shrinkwrap(loop, frameLuma(), mask.width(), mask.height(), 18, snapped))
 			return;
-
-		QPointF center;
-		for (const QPointF &pt : dense)
-			center += pt;
-		center /= static_cast<double>(dense.size());
-
-		std::vector<uint8_t> lum(static_cast<size_t>(w) * h);
-		QImage rgb = frame.convertToFormat(QImage::Format_ARGB32);
-		for (int y = 0; y < h; y++) {
-			const QRgb *row = reinterpret_cast<const QRgb *>(rgb.constScanLine(y));
-			for (int x = 0; x < w; x++) {
-				const QRgb p = row[x];
-				lum[static_cast<size_t>(y) * w + x] =
-					static_cast<uint8_t>((77 * qRed(p) + 150 * qGreen(p) + 29 * qBlue(p)) >> 8);
-			}
-		}
-		std::vector<uint16_t> mag(static_cast<size_t>(w) * h, 0);
-		for (int y = 1; y < h - 1; y++) {
-			for (int x = 1; x < w - 1; x++) {
-				const int i = y * w + x;
-				const int gx = -lum[i - w - 1] - 2 * lum[i - 1] - lum[i + w - 1] + lum[i - w + 1] +
-					       2 * lum[i + 1] + lum[i + w + 1];
-				const int gy = -lum[i - w - 1] - 2 * lum[i - w] - lum[i - w + 1] + lum[i + w - 1] +
-					       2 * lum[i + w] + lum[i + w + 1];
-				mag[i] = static_cast<uint16_t>(std::abs(gx) + std::abs(gy));
-			}
-		}
-
-		auto sample = [&](double x, double y) -> int {
-			const int ix = static_cast<int>(std::lround(x));
-			const int iy = static_cast<int>(std::lround(y));
-			if (ix <= 0 || iy <= 0 || ix >= w - 1 || iy >= h - 1)
-				return 0;
-			return mag[iy * w + ix];
-		};
-
-		const int search = 18;
-		std::vector<int> pull(static_cast<size_t>(dense.size()), 0);
-		for (int i = 0; i < dense.size(); i++) {
-			const QPointF prev = dense[(i + dense.size() - 1) % dense.size()];
-			const QPointF next = dense[(i + 1) % dense.size()];
-			QPointF tang(next.x() - prev.x(), next.y() - prev.y());
-			const double len = std::hypot(tang.x(), tang.y());
-			if (len < 1e-3)
-				continue;
-			QPointF nrm(-tang.y() / len, tang.x() / len);
-			const QPointF toC(center.x() - dense[i].x(), center.y() - dense[i].y());
-			if (nrm.x() * toC.x() + nrm.y() * toC.y() < 0) {
-				nrm.setX(-nrm.x());
-				nrm.setY(-nrm.y());
-			}
-
-			int rayMax = 1;
-			for (int t = 2; t <= search; t++)
-				rayMax = std::max(rayMax, sample(dense[i].x() + nrm.x() * t, dense[i].y() + nrm.y() * t));
-			const int thresh = std::max(28, (int)(0.50 * rayMax));
-			int useT = 0;
-			for (int t = 2; t <= search - 1; t++) {
-				const int m = sample(dense[i].x() + nrm.x() * t, dense[i].y() + nrm.y() * t);
-				if (m < thresh)
-					continue;
-				const int mo = sample(dense[i].x() + nrm.x() * (t - 1), dense[i].y() + nrm.y() * (t - 1));
-				const int mi = sample(dense[i].x() + nrm.x() * (t + 1), dense[i].y() + nrm.y() * (t + 1));
-				if (m >= mo && m >= mi) {
-					useT = t;
-					break;
-				}
-			}
-			pull[static_cast<size_t>(i)] = useT;
-		}
-		/* Median-filter pull distances so one inner icon cannot spike the outline. */
-		std::vector<int> smooth = pull;
-		for (int i = 0; i < dense.size(); i++) {
-			int vals[5];
-			for (int k = -2; k <= 2; k++)
-				vals[k + 2] = pull[static_cast<size_t>((i + k + dense.size()) % dense.size())];
-			std::sort(vals, vals + 5);
-			smooth[static_cast<size_t>(i)] = vals[2];
-		}
-		QPolygonF snapped;
-		snapped.reserve(dense.size());
-		for (int i = 0; i < dense.size(); i++) {
-			const QPointF prev = dense[(i + dense.size() - 1) % dense.size()];
-			const QPointF next = dense[(i + 1) % dense.size()];
-			QPointF tang(next.x() - prev.x(), next.y() - prev.y());
-			const double len = std::hypot(tang.x(), tang.y());
-			QPointF nrm(0, 0);
-			if (len >= 1e-3) {
-				nrm = QPointF(-tang.y() / len, tang.x() / len);
-				const QPointF toC(center.x() - dense[i].x(), center.y() - dense[i].y());
-				if (nrm.x() * toC.x() + nrm.y() * toC.y() < 0) {
-					nrm.setX(-nrm.x());
-					nrm.setY(-nrm.y());
-				}
-			}
-			const int t = smooth[static_cast<size_t>(i)];
-			snapped << QPointF(dense[i].x() + nrm.x() * t, dense[i].y() + nrm.y() * t);
-		}
-		if (snapped.size() < 8)
-			return;
-
+		QPolygonF poly;
+		poly.reserve(static_cast<int>(snapped.size()));
+		for (const MaskPoint &pt : snapped)
+			poly << QPointF(pt.x, pt.y);
 		pushUndo();
 		QPainter p(&mask);
 		p.setRenderHint(QPainter::Antialiasing, true);
 		p.setPen(Qt::NoPen);
 		p.setBrush(Qt::white);
-		p.drawPolygon(snapped);
+		p.drawPolygon(poly);
 		update();
 	}
 
@@ -1553,37 +1258,23 @@ private:
 		}
 
 		const QImage &m = canvas_->mask;
-		int minx = m.width(), miny = m.height(), maxx = -1, maxy = -1;
-		for (int y = 0; y < m.height(); y++) {
-			const uint8_t *row = m.constScanLine(y);
-			for (int x = 0; x < m.width(); x++) {
-				if (row[x] < 20)
-					continue;
-				minx = std::min(minx, x);
-				miny = std::min(miny, y);
-				maxx = std::max(maxx, x);
-				maxy = std::max(maxy, y);
-			}
-		}
-
-		if (maxx < minx) {
+		std::vector<uint8_t> gray(static_cast<size_t>(m.width()) * m.height());
+		for (int y = 0; y < m.height(); y++)
+			memcpy(gray.data() + static_cast<size_t>(y) * m.width(), m.constScanLine(y),
+			       static_cast<size_t>(m.width()));
+		const MaskCrop crop = mask_crop_from_opaque(gray, m.width(), m.height(), 20, 32);
+		if (crop.empty) {
 			hud_mask_set_cutout(ctx_, "", 0, 0, 0, 0);
 			accept();
 			return;
 		}
 
-		const int pad = 32;
-		minx = std::max(0, minx - pad);
-		miny = std::max(0, miny - pad);
-		maxx = std::min(m.width() - 1, maxx + pad);
-		maxy = std::min(m.height() - 1, maxy + pad);
+		const int left = crop.left;
+		const int top = crop.top;
+		const int right = crop.right;
+		const int bottom = crop.bottom;
 
-		const int left = minx;
-		const int top = miny;
-		const int right = m.width() - 1 - maxx;
-		const int bottom = m.height() - 1 - maxy;
-
-		QImage cropped = m.copy(minx, miny, maxx - minx + 1, maxy - miny + 1)
+		QImage cropped = m.copy(crop.min_x, crop.min_y, crop.max_x - crop.min_x + 1, crop.max_y - crop.min_y + 1)
 					 .convertToFormat(QImage::Format_Grayscale8);
 
 		char *dir = obs_module_get_config_path(obs_current_module(), "masks");

@@ -12,7 +12,6 @@
 !/docs
 !/src
 !/tests
-!/profiles
 !.clang-format
 !.gersemirc
 !.gitignore
@@ -25,7 +24,6 @@
 # Docs and planning
 !/docs/**
 !/tests/**
-!/profiles/**
 !/.github/**
 
 # Exclude lock files
@@ -36,7 +34,3 @@
 
 # Exclude CMake build number cache
 /cmake/.CMakeBuildNumber
-
-# Personal mask assets
-/profiles/**/*.png
-/profiles/**/*.psd

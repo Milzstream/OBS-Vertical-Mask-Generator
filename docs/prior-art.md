@@ -31,8 +31,8 @@ Aitum Vertical / Stream Suite add a canvas. They do not extract HUD.
 Not a missing OBS API. Sample + mask is proven.
 
 1. Dual-canvas vertical is still new; the community publishes PNG packs.
-2. Highlight → edge-snap is setup-time CV, not a 60 fps GPU problem, and nobody packaged an editor for it.
-3. Auto-hide is possible (pattern match) but easy to get wrong on changing HUD fill.
+2. Highlight → edge-snap is setup-time CV, not a 60 fps GPU problem. HUD Mask packages that as Snap Edges / Magic Select in the editor.
+3. Auto-hide is possible (pattern match) but easy to get wrong on changing HUD fill — that is why it stays optional and is not in the current release.
 4. Combining sample + shaped cut-out + placeable source + optional presence into one add-source flow is what is missing.
 
-This project should reuse those ideas (texrender sampling, small-template match, feathered alpha), not reimplement Advanced Masks or Source Clone as the product.
+This project reuses those ideas (texrender sampling, small-template match, feathered alpha). It does not reimplement Advanced Masks or Source Clone as the product.
