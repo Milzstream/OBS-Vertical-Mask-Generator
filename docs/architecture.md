@@ -39,7 +39,9 @@ Every frame (GPU), per visible HUD Mask
   draw the crop through the current mask (expand / feather already baked or applied)
 ```
 
-No presence analysis. Auto-hide is stored as `auto_hide` (default off) and is not used yet. See [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20).
+### Auto-hide
+
+Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide-on instances by sampled target and does **one** downsample/readback per target. Each mask scores the **outer band** of its paint against the Draw mask still (Pearson correlation, brightness-invariant). Interiors can change. Hidden scene items are skipped. Fade and a match slider live on the properties pane. The scene-item eyeball is never toggled; the source draws transparent instead.
 
 ## Highlight tools (setup only)
 
@@ -55,14 +57,16 @@ On the source:
 - Crop rect
 - Mask PNG path
 - Expand, feather
-- `auto_hide` (unused)
+- Auto-hide, fade ms, match percent
+- Presence still (`masks/<uuid>.ref`) next to the mask PNG
 
 ## Performance budget
 
 All HUD Mask instances combined should cost less than an extra game capture.
 
 - **Draw:** GPU sample + small masked blit per visible instance (same order as a source clone + crop).
-- **Auto-hide off (always, today):** no analysis.
+- **Auto-hide off:** no analysis.
+- **Auto-hide on:** one downsample/readback per unique visible target, not per mask. ≤10 Hz. Hidden items skipped.
 - **Editor tools:** snapshot or paused frame only.
 
 ## Stream Suite
@@ -73,5 +77,5 @@ Normal OBS source. Intended placement: extra (vertical) canvas, sampling a main-
 
 - No injection, game memory, or telemetry
 - GitHub `/releases/latest` only, for the optional update prompt
-- Auto-hide will be off by default when it ships
+- Auto-hide off by default
 - Scene-item visibility still overrides

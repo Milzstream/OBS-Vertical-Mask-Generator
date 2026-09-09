@@ -400,6 +400,70 @@ int main()
 		CHECK(near_outer * 2 > static_cast<int>(snapped.size()));
 	}
 
+	CHECK(mask_presence_threshold(0) == 0.0f);
+	CHECK(mask_presence_threshold(50) == 0.5f);
+	CHECK(mask_presence_threshold(80) == 0.8f);
+	CHECK(mask_presence_threshold(100) == 1.0f);
+	CHECK(mask_presence_threshold(50) > mask_presence_threshold(0));
+	CHECK(mask_presence_threshold(50) < mask_presence_threshold(100));
+
+	/* Presence: painted outline vs live edges. Interior color/art can change. */
+	{
+		const int w = 48, h = 48;
+		std::vector<uint8_t> mask(static_cast<size_t>(w) * h, 0);
+		for (int y = 8; y <= 39; y++)
+			for (int x = 8; x <= 39; x++)
+				mask[static_cast<size_t>(y) * w + x] = 255;
+
+		auto panel = [&](uint8_t border, uint8_t fill, int x0, int y0, int x1, int y1) {
+			std::vector<uint8_t> g(static_cast<size_t>(w) * h, 40);
+			for (int y = y0; y <= y1; y++) {
+				for (int x = x0; x <= x1; x++) {
+					const bool rim = x <= x0 + 2 || x >= x1 - 2 || y <= y0 + 2 || y >= y1 - 2;
+					g[static_cast<size_t>(y) * w + x] = rim ? border : fill;
+				}
+			}
+			return g;
+		};
+
+		std::vector<uint8_t> gold = panel(220, 90, 8, 8, 39, 39);
+		float score = 0;
+		CHECK(mask_presence_outline_score(mask, gold, nullptr, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* Legendary recolor + different gun art. */
+		std::vector<uint8_t> red = panel(40, 200, 8, 8, 39, 39);
+		for (int y = 16; y <= 28; y++)
+			for (int x = 14; x <= 34; x++)
+				red[static_cast<size_t>(y) * w + x] = 240;
+		CHECK(mask_presence_outline_score(mask, red, nullptr, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* Empty slot: same hex, smaller and fainter. */
+		std::vector<uint8_t> empty = panel(160, 50, 12, 12, 35, 35);
+		CHECK(mask_presence_outline_score(mask, empty, nullptr, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* HUD gone: no hex, just a smooth world (sky / wall). */
+		std::vector<uint8_t> gone(static_cast<size_t>(w) * h);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				gone[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(60 + (x + y) * 80 / (w + h));
+		CHECK(mask_presence_outline_score(mask, gone, nullptr, w, h, &score));
+		CHECK(score < mask_presence_threshold(50));
+
+		/* World moving through the slot: edges do not stay put. */
+		std::vector<uint8_t> world0(static_cast<size_t>(w) * h);
+		std::vector<uint8_t> world1(static_cast<size_t>(w) * h);
+		for (int i = 0; i < w * h; i++) {
+			world0[static_cast<size_t>(i)] = static_cast<uint8_t>((i * 13) & 255);
+			world1[static_cast<size_t>(i)] = static_cast<uint8_t>(((i + 17) * 29) & 255);
+		}
+		CHECK(mask_presence_outline_score(mask, world1, &world0, w, h, &score));
+		CHECK(score < mask_presence_threshold(50));
+	}
+
 	if (g_fails) {
 		std::printf("%d check(s) failed\n", g_fails);
 		return 1;

@@ -18,18 +18,6 @@ Requires OBS Studio 32+ on Windows 10/11 x64. Close OBS first.
 
 The installer writes only under ProgramData. On later launches, HUD Mask checks GitHub for a newer release and can open the download. Close OBS before running a new installer.
 
-### If you copied files into Program Files by hand
-
-Early local copies (and an old helper script) also dropped a DLL next to OBS. That copy loads **in addition to** the installer and you will see HUD Mask twice, or `Source 'vertical_hud_mask' already exists!`. Close OBS, then from an **elevated** PowerShell:
-
-```powershell
-Remove-Item -Force "C:\Program Files\obs-studio\obs-plugins\64bit\vertical-hud-mask.dll" -ErrorAction SilentlyContinue
-Remove-Item -Force "C:\Program Files\obs-studio\obs-plugins\64bit\vertical-hud-mask.pdb" -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force "C:\Program Files\obs-studio\data\obs-plugins\vertical-hud-mask" -ErrorAction SilentlyContinue
-```
-
-Then run the installer (it also tries to remove those leftovers).
-
 ## Use
 
 1. Add a **HUD Mask** source.
@@ -46,7 +34,7 @@ Then run the installer (it also tries to remove those leftovers).
 
 **Expand** and **Feather** on the properties pane are available after a mask exists.
 
-Auto-hide (hide the cut-out when that HUD element is gone) is **not in this release**. It is planned as an optional checkbox, off by default ([#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20)).
+**Auto-hide** (off by default) makes the cut-out transparent when that HUD outline is gone, so loading screens and menus do not show through the hole. It does not click the OBS eyeball; a hidden scene item is skipped. Draw the mask while the HUD is visible — that still is the outline reference. **Fade** (0 ms is instant) and **Match** (how picky the outline compare is) are next to the checkbox. If it hides while the HUD is still on screen, open Draw mask, show the HUD, Refresh, then Apply.
 
 ## Build from source
 

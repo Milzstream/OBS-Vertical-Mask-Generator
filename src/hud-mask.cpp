@@ -11,6 +11,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include "hud-mask.hpp"
 #include "cutout-editor.hpp"
 #include "mask-process.hpp"
+#include "presence.hpp"
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
@@ -41,6 +42,8 @@ constexpr const char *k_mask_path = "mask_path";
 constexpr const char *k_expand = "expand";
 constexpr const char *k_feather = "feather";
 constexpr const char *k_auto_hide = "auto_hide";
+constexpr const char *k_fade = "auto_hide_fade";
+constexpr const char *k_match = "auto_hide_match";
 
 gs_effect_t *mask_effect = nullptr;
 
@@ -181,8 +184,12 @@ void load_mask_texture(hud_mask *ctx, const char *path)
 {
 	free_mask_texture(ctx);
 	ctx->mask_path = path ? path : "";
-	if (ctx->mask_path.empty())
+	ctx->mask_gray.clear();
+	ctx->mask_w = ctx->mask_h = 0;
+	if (ctx->mask_path.empty()) {
+		hud_mask_presence_clear_ref(ctx);
 		return;
+	}
 
 	QImage img(QString::fromUtf8(ctx->mask_path.c_str()));
 	if (img.isNull()) {
@@ -198,6 +205,13 @@ void load_mask_texture(hud_mask *ctx, const char *path)
 	std::vector<uint8_t> gray(static_cast<size_t>(w) * h);
 	for (int y = 0; y < h; y++)
 		memcpy(gray.data() + static_cast<size_t>(y) * w, img.constScanLine(y), static_cast<size_t>(w));
+
+	ctx->mask_gray = gray;
+	ctx->mask_w = w;
+	ctx->mask_h = h;
+	hud_mask_presence_load_ref(ctx);
+	if (ctx->auto_hide && !ctx->ref_valid)
+		ctx->ref_capture_pending = true;
 
 	if (ctx->expand != 0 || ctx->feather > 0) {
 		mask_binarize(gray);
@@ -246,6 +260,7 @@ void *hud_mask_create(obs_data_t *settings, obs_source_t *source)
 {
 	auto *ctx = new hud_mask();
 	ctx->self = source;
+	hud_mask_presence_register(ctx);
 	obs_source_update(source, settings);
 	return ctx;
 }
@@ -253,6 +268,7 @@ void *hud_mask_create(obs_data_t *settings, obs_source_t *source)
 void hud_mask_destroy(void *data)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
+	hud_mask_presence_unregister(ctx);
 	set_target(ctx, "");
 	free_mask_texture(ctx);
 	if (ctx->texrender) {
@@ -276,7 +292,25 @@ void hud_mask_update(void *data, obs_data_t *settings)
 	ctx->expand = static_cast<int>(obs_data_get_int(settings, k_expand));
 	ctx->feather = static_cast<int>(obs_data_get_int(settings, k_feather));
 	ctx->auto_hide = obs_data_get_bool(settings, k_auto_hide);
+	ctx->fade_ms = static_cast<int>(obs_data_get_int(settings, k_fade));
+	ctx->match_pct = static_cast<int>(obs_data_get_int(settings, k_match));
+	if (ctx->fade_ms < 0)
+		ctx->fade_ms = 0;
+	if (ctx->fade_ms > 2000)
+		ctx->fade_ms = 2000;
+	if (ctx->match_pct < 0)
+		ctx->match_pct = 0;
+	if (ctx->match_pct > 100)
+		ctx->match_pct = 100;
 	load_mask_texture(ctx, obs_data_get_string(settings, k_mask_path));
+	if (!ctx->auto_hide) {
+		ctx->presence_shown = true;
+		ctx->draw_alpha = 1.0f;
+		ctx->presence_streak = 0;
+		ctx->ref_capture_pending = false;
+	} else if (!ctx->ref_valid) {
+		ctx->ref_capture_pending = true;
+	}
 	update_size(ctx);
 }
 
@@ -299,6 +333,8 @@ void hud_mask_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, k_expand, 0);
 	obs_data_set_default_int(settings, k_feather, 0);
 	obs_data_set_default_bool(settings, k_auto_hide, false);
+	obs_data_set_default_int(settings, k_fade, 200);
+	obs_data_set_default_int(settings, k_match, 50);
 }
 
 struct collect_ctx {
@@ -499,6 +535,23 @@ bool draw_mask_clicked(obs_properties_t *, obs_property_t *, void *priv)
 	return true;
 }
 
+bool auto_hide_modified(void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	const bool has_mask = settings && obs_data_get_string(settings, k_mask_path) &&
+			      obs_data_get_string(settings, k_mask_path)[0];
+	const bool on = settings && obs_data_get_bool(settings, k_auto_hide);
+	obs_property_t *hide = obs_properties_get(props, k_auto_hide);
+	obs_property_t *fade = obs_properties_get(props, k_fade);
+	obs_property_t *match = obs_properties_get(props, k_match);
+	if (hide)
+		obs_property_set_enabled(hide, has_mask);
+	if (fade)
+		obs_property_set_enabled(fade, has_mask && on);
+	if (match)
+		obs_property_set_enabled(match, has_mask && on);
+	return true;
+}
+
 obs_properties_t *hud_mask_properties(void *data)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
@@ -561,6 +614,20 @@ obs_properties_t *hud_mask_properties(void *data)
 	obs_property_set_enabled(expand, has_mask);
 	obs_property_set_enabled(feather, has_mask);
 
+	obs_property_t *hide = obs_properties_add_bool(props, k_auto_hide, obs_module_text("HUDMask.AutoHide"));
+	obs_property_set_long_description(hide, obs_module_text("HUDMask.AutoHide.Help"));
+	obs_property_set_modified_callback2(hide, auto_hide_modified, ctx);
+	obs_property_t *fade = obs_properties_add_int(props, k_fade, obs_module_text("HUDMask.AutoHide.Fade"), 0, 2000, 50);
+	obs_property_int_set_suffix(fade, " ms");
+	obs_property_set_long_description(fade, obs_module_text("HUDMask.AutoHide.Fade.Help"));
+	obs_property_t *match = obs_properties_add_int_slider(props, k_match, obs_module_text("HUDMask.AutoHide.Match"), 0,
+							     100, 1);
+	obs_property_set_long_description(match, obs_module_text("HUDMask.AutoHide.Match.Help"));
+	const bool hide_on = ctx && ctx->auto_hide;
+	obs_property_set_enabled(hide, has_mask);
+	obs_property_set_enabled(fade, has_mask && hide_on);
+	obs_property_set_enabled(match, has_mask && hide_on);
+
 	return props;
 }
 
@@ -574,12 +641,20 @@ uint32_t hud_mask_height(void *data)
 	return static_cast<hud_mask *>(data)->cy;
 }
 
-void hud_mask_tick(void *data, float)
+void hud_mask_tick(void *data, float seconds)
 {
-	update_size(static_cast<hud_mask *>(data));
+	auto *ctx = static_cast<hud_mask *>(data);
+	update_size(ctx);
+	if (!ctx->auto_hide) {
+		ctx->presence_shown = true;
+		ctx->draw_alpha = 1.0f;
+		ctx->presence_streak = 0;
+		return;
+	}
+	hud_mask_presence_tick_fade(ctx, seconds);
 }
 
-void draw_texture(gs_texture_t *tex, uint32_t cx, uint32_t cy, gs_texture_t *mask)
+void draw_texture(gs_texture_t *tex, uint32_t cx, uint32_t cy, gs_texture_t *mask, float opacity)
 {
 	if (!tex)
 		return;
@@ -593,6 +668,9 @@ void draw_texture(gs_texture_t *tex, uint32_t cx, uint32_t cy, gs_texture_t *mas
 		gs_effect_set_texture(image_param, tex);
 		gs_eparam_t *mask_param = gs_effect_get_param_by_name(effect, "mask");
 		gs_effect_set_texture(mask_param, mask);
+		gs_eparam_t *op = gs_effect_get_param_by_name(effect, "opacity");
+		if (op)
+			gs_effect_set_float(op, opacity);
 	} else {
 		effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 		image_param = gs_effect_get_param_by_name(effect, "image");
@@ -607,6 +685,8 @@ void hud_mask_render(void *data, gs_effect_t *)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
 	if (ctx->rendering || ctx->cx == 0 || ctx->cy == 0)
+		return;
+	if (ctx->auto_hide && ctx->draw_alpha <= 0.001f)
 		return;
 
 	obs_source_t *target = acquire_target(ctx);
@@ -640,7 +720,8 @@ void hud_mask_render(void *data, gs_effect_t *)
 
 	gs_texture_t *tex = gs_texrender_get_texture(ctx->texrender);
 	gs_texture_t *mask = ctx->mask_loaded ? ctx->mask_tex : nullptr;
-	draw_texture(tex, ctx->cx, ctx->cy, mask);
+	const float opacity = ctx->auto_hide ? ctx->draw_alpha : 1.0f;
+	draw_texture(tex, ctx->cx, ctx->cy, mask, opacity);
 
 	ctx->rendering = false;
 	obs_source_release(target);
@@ -706,6 +787,9 @@ void hud_mask_set_cutout(hud_mask *ctx, const char *path, int left, int top, int
 {
 	if (!ctx || !ctx->self)
 		return;
+
+	if (!path || !path[0])
+		hud_mask_presence_clear_ref(ctx);
 
 	obs_data_t *settings = obs_source_get_settings(ctx->self);
 	obs_data_set_string(settings, k_mask_path, path ? path : "");

@@ -43,6 +43,8 @@ target_sources(
           src/cutout-editor.hpp
           src/mask-process.cpp
           src/mask-process.hpp
+          src/presence.cpp
+          src/presence.hpp
           src/update-check.cpp
           src/update-check.hpp
           src/update-parse.hpp
