@@ -3,6 +3,7 @@
 #include <obs-module.h>
 
 #include <string>
+#include <vector>
 
 struct hud_mask {
 	obs_source_t *self = nullptr;
@@ -23,6 +24,23 @@ struct hud_mask {
 	int expand = 0;
 	int feather = 0;
 	bool auto_hide = false;
+	int fade_ms = 200;
+	int match_pct = 50;
+
+	std::vector<uint8_t> mask_gray;
+	int mask_w = 0;
+	int mask_h = 0;
+
+	bool ref_valid = false;
+	bool ref_capture_pending = false;
+	int ref_w = 0;
+	int ref_h = 0;
+	std::vector<uint8_t> ref_luma;
+	std::vector<uint8_t> ref_band;
+
+	bool presence_shown = true;
+	int presence_streak = 0;
+	float draw_alpha = 1.0f;
 
 	uint32_t src_cx = 0;
 	uint32_t src_cy = 0;

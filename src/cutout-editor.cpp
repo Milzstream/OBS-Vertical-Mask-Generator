@@ -11,6 +11,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include "cutout-editor.hpp"
 #include "hud-mask.hpp"
 #include "mask-process.hpp"
+#include "presence.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -1298,6 +1299,26 @@ private:
 					     QString::fromUtf8(obs_module_text("HUDMask.Editor.SaveFailed")));
 			return;
 		}
+
+		const int cw = crop.max_x - crop.min_x + 1;
+		const int ch = crop.max_y - crop.min_y + 1;
+		std::vector<uint8_t> luma(static_cast<size_t>(cw) * ch);
+		QImage frame_crop = canvas_->frame.copy(crop.min_x, crop.min_y, cw, ch)
+					    .convertToFormat(QImage::Format_ARGB32);
+		for (int y = 0; y < ch; y++) {
+			const QRgb *row = reinterpret_cast<const QRgb *>(frame_crop.constScanLine(y));
+			for (int x = 0; x < cw; x++) {
+				const QRgb p = row[x];
+				luma[static_cast<size_t>(y) * cw + x] =
+					static_cast<uint8_t>((77 * qRed(p) + 150 * qGreen(p) + 29 * qBlue(p)) >> 8);
+			}
+		}
+		std::vector<uint8_t> crop_mask(static_cast<size_t>(cw) * ch);
+		for (int y = 0; y < ch; y++)
+			memcpy(crop_mask.data() + static_cast<size_t>(y) * cw, cropped.constScanLine(y),
+			       static_cast<size_t>(cw));
+		ctx_->mask_path = full;
+		hud_mask_presence_save_ref(ctx_, luma.data(), crop_mask.data(), cw, ch);
 
 		hud_mask_set_cutout(ctx_, full, left, top, right, bottom);
 		bfree(full);

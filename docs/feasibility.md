@@ -17,9 +17,9 @@ No. See [prior-art.md](prior-art.md). Sampling and PNG masks are solved. The mis
 
 Paint, line, fill, Magic Select, and Snap Edges. Realistic for high-contrast chrome (circular minimap, ability rings, a dark meter panel). Weaker on translucent HUD, icons that look like the world, and soft glows. Escape hatch: erase and paint again. First-stroke outlines will not match a hand-traced PNG.
 
-## Auto-hide (not shipped)
+## Auto-hide
 
-Optional checkbox, off by default — zero analysis cost when off.
+Optional checkbox, off by default — zero analysis cost when off. The first slice matches the outer band of the paint to the Draw mask still (not the fill).
 
 **Whole instance first.** If the element is gone (loading screen, hide-UI key), the source is fully transparent. That is the easy win.
 

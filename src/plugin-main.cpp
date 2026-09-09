@@ -12,6 +12,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <plugin-support.h>
 
 #include "hud-mask.hpp"
+#include "presence.hpp"
 #include "update-check.hpp"
 
 OBS_DECLARE_MODULE()
@@ -26,6 +27,7 @@ bool obs_module_load(void)
 {
 	hud_mask_load_effects();
 	register_hud_mask_source();
+	hud_mask_presence_start();
 	hud_mask_update_check_start();
 	obs_log(LOG_INFO, "loaded (version %s)", PLUGIN_VERSION);
 	return true;
@@ -34,6 +36,7 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	hud_mask_update_check_stop();
+	hud_mask_presence_stop();
 	hud_mask_unload_effects();
 	obs_log(LOG_INFO, "unloaded");
 }

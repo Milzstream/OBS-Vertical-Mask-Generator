@@ -19,7 +19,7 @@ It samples any other source, lets the user highlight an element on a live view, 
 
 It is **not** Aitum-specific and **not** vertical-specific. Aitum Vertical is the intended canvas, not a dependency. There is no in-plugin list of games.
 
-Optional **auto-hide** (not shipped) will make the cut-out transparent when that element is no longer in the sampled source. It will be a checkbox, off by default, so a bad detector never makes the source worse than a static PNG. See [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20).
+Optional **auto-hide** makes the cut-out transparent when that element’s outline is no longer in the sampled source. It is a checkbox, off by default, so a bad detector never makes the source worse than a static PNG. See [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20).
 
 ## Setup
 
@@ -35,7 +35,7 @@ One instance is one cut-out. Use more HUD Masks for more elements (**Same Masks*
 
 **Cut-out always works.** Manual scene-item visibility always still works.
 
-When auto-hide ships and is on:
+When auto-hide is on:
 
 - Presence is about the **element**, not the artwork inside it (cooldowns and meter numbers should not hide a bar).
 - All visible auto-hide masks are scored in **one shared cycle** (minimap and abilities together, not a timer per source). Hidden items are skipped.

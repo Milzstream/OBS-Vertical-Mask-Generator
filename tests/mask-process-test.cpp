@@ -400,6 +400,69 @@ int main()
 		CHECK(near_outer * 2 > static_cast<int>(snapped.size()));
 	}
 
+	CHECK(mask_presence_threshold(0) >= 0.29f && mask_presence_threshold(0) <= 0.31f);
+	CHECK(mask_presence_threshold(100) >= 0.79f && mask_presence_threshold(100) <= 0.81f);
+	CHECK(mask_presence_threshold(50) > mask_presence_threshold(0));
+	CHECK(mask_presence_threshold(50) < mask_presence_threshold(100));
+
+	/* Presence: interior fill can change; the outer band is what matters. */
+	{
+		const int w = 48, h = 48;
+		std::vector<uint8_t> mask(static_cast<size_t>(w) * h, 0);
+		for (int y = 8; y <= 39; y++)
+			for (int x = 8; x <= 39; x++)
+				mask[static_cast<size_t>(y) * w + x] = 255;
+
+		std::vector<uint8_t> band;
+		mask_silhouette_band(mask, w, h, 3, band);
+		int band_n = 0;
+		int inner = 0;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				if (band[static_cast<size_t>(y) * w + x] < 128)
+					continue;
+				band_n++;
+				if (x >= 14 && x <= 33 && y >= 14 && y <= 33)
+					inner++;
+			}
+		}
+		CHECK(band_n > 40);
+		CHECK(inner == 0);
+
+		std::vector<uint8_t> ref(static_cast<size_t>(w) * h, 20);
+		for (int y = 8; y <= 39; y++) {
+			for (int x = 8; x <= 39; x++) {
+				const bool rim = x <= 11 || x >= 36 || y <= 11 || y >= 36;
+				ref[static_cast<size_t>(y) * w + x] = rim ? 200 : 80;
+			}
+		}
+
+		/* Insides changed (minimap terrain / numbers). */
+		std::vector<uint8_t> walked = ref;
+		for (int y = 14; y <= 33; y++)
+			for (int x = 14; x <= 33; x++)
+				walked[static_cast<size_t>(y) * w + x] = static_cast<uint8_t>((x * 13 + y * 7) & 255);
+		float score = 0;
+		CHECK(mask_presence_score(ref, walked, band, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* Whole frame darkened, rim shape remains (modal overlay). */
+		std::vector<uint8_t> dim = ref;
+		for (uint8_t &p : dim)
+			p = static_cast<uint8_t>(p * 0.4f);
+		CHECK(mask_presence_score(ref, dim, band, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* Outer band replaced with noise (HUD gone / empty slots). */
+		std::vector<uint8_t> gone = ref;
+		for (int i = 0; i < w * h; i++) {
+			if (band[static_cast<size_t>(i)] >= 128)
+				gone[static_cast<size_t>(i)] = static_cast<uint8_t>((i * 37) & 255);
+		}
+		CHECK(mask_presence_score(ref, gone, band, w, h, &score));
+		CHECK(score < mask_presence_threshold(50));
+	}
+
 	if (g_fails) {
 		std::printf("%d check(s) failed\n", g_fails);
 		return 1;

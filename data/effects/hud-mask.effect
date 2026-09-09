@@ -1,6 +1,7 @@
 uniform float4x4 ViewProj;
 uniform texture2d image;
 uniform texture2d mask;
+uniform float opacity;
 
 sampler_state textureSampler {
 	Filter = Linear;
@@ -25,7 +26,7 @@ float4 PSMask(VertData v_in) : TARGET
 {
 	float4 rgba = image.Sample(textureSampler, v_in.uv);
 	float a = mask.Sample(textureSampler, v_in.uv).r;
-	rgba *= a;
+	rgba *= a * opacity;
 	return rgba;
 }
 

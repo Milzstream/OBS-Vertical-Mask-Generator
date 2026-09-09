@@ -60,3 +60,19 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
  * shrinkwrapped polygon. Returns false if the loop is too short. */
 bool mask_magic_shrinkwrap(const std::vector<MaskPoint> &loop, const std::vector<uint8_t> &lum, int width, int height,
 			   int search, std::vector<MaskPoint> &out);
+
+/* Pixels in the mask (>= 20) that lie within `radius` of empty. That outer
+ * band is the presence template: interiors can change without hiding. */
+void mask_silhouette_band(const std::vector<uint8_t> &mask, int width, int height, int radius,
+			  std::vector<uint8_t> &band);
+
+void mask_resize_luma(const std::vector<uint8_t> &src, int src_w, int src_h, std::vector<uint8_t> &dst, int dst_w,
+		      int dst_h);
+
+/* Pearson correlation of luma on band pixels, clamped to [0, 1]. Returns false
+ * if the band is too small. */
+bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
+			 const std::vector<uint8_t> &band, int width, int height, float *score);
+
+/* Map a 0–100 match slider to a hide threshold. 0 is lenient, 100 is strict. */
+float mask_presence_threshold(int match_percent);

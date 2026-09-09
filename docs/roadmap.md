@@ -9,16 +9,16 @@ Highlight → optional snap → crop → placeable source. Windows installer to 
 - Cutout editor (paint, line, fill, Magic Select, Snap Edges)
 - Works on a vertical canvas and on a vanilla OBS scene
 
-## Next — optional auto-hide
+## Auto-hide (this branch)
 
 [#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20)
 
 - Auto-hide checkbox, **off by default**
-- Whole-instance hide when the element is gone
+- Whole-instance hide when the painted outline is gone
 - **One shared presence cycle** for all visible auto-hide masks (grouped by sampled source)
-- Hysteresis + fade; signatures ignore changing fill
+- Fade (0 = instant) and Match sliders; hysteresis so 0 ms does not strobe
 
-Per-island hide inside one mask is a follow-up, not the first slice.
+Per-island hide inside one mask is a follow-up.
 
 ## Later
 
