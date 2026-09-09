@@ -27,9 +27,8 @@ the Free Software Foundation; either version 2 of the License, or
 
 namespace {
 
-constexpr int k_band_radius = 3;
 constexpr int k_hysteresis = 3;
-constexpr int k_ds_max = 640;
+constexpr int k_ds_max = 960;
 constexpr float k_cycle_sec = 0.10f;
 constexpr const char k_ref_magic[6] = {'H', 'M', 'R', 'E', 'F', '1'};
 
@@ -101,6 +100,7 @@ void apply_score(hud_mask *ctx, float score)
 	}
 	ctx->presence_streak++;
 	if (ctx->presence_streak >= k_hysteresis) {
+		obs_log(LOG_INFO, "auto-hide %s (score %.2f, need %.2f)", want ? "show" : "hide", score, thresh);
 		ctx->presence_shown = want;
 		ctx->presence_streak = 0;
 	}
@@ -111,10 +111,10 @@ void learn_from_luma(hud_mask *ctx, const std::vector<uint8_t> &luma, int w, int
 	if (!ctx || w < 1 || h < 1)
 		return;
 	std::vector<uint8_t> band;
-	if (ctx->mask_w == w && ctx->mask_h == h && !ctx->mask_gray.empty())
-		mask_silhouette_band(ctx->mask_gray, w, h, k_band_radius, band);
-	else
+	if (ctx->mask_w != w || ctx->mask_h != h || ctx->mask_gray.empty())
 		return;
+	const int inset = std::max(1, std::min(w, h) / 12);
+	mask_presence_band(ctx->mask_gray, &luma, w, h, inset, band);
 	ctx->ref_luma = luma;
 	ctx->ref_band = std::move(band);
 	ctx->ref_w = w;
@@ -162,10 +162,20 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 		return;
 	}
 
-	std::vector<uint8_t> cur;
-	mask_resize_luma(roi, rw, rh, cur, ctx->ref_w, ctx->ref_h);
+	/* Compare at the downsample crop size so a 3px fringe is not the whole signal. */
+	std::vector<uint8_t> ref_s;
+	std::vector<uint8_t> mask_s;
+	mask_resize_luma(ctx->ref_luma, ctx->ref_w, ctx->ref_h, ref_s, rw, rh);
+	if (ctx->mask_w > 0 && ctx->mask_h > 0 && !ctx->mask_gray.empty())
+		mask_resize_mask(ctx->mask_gray, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
+	else
+		mask_resize_mask(ctx->ref_band, ctx->ref_w, ctx->ref_h, mask_s, rw, rh);
+
+	const int inset = std::max(1, std::min(rw, rh) / 12);
+	std::vector<uint8_t> band;
+	mask_presence_band(mask_s, &ref_s, rw, rh, inset, band);
 	float score = 0;
-	if (!mask_presence_score(ctx->ref_luma, cur, ctx->ref_band, ctx->ref_w, ctx->ref_h, &score))
+	if (!mask_presence_score(ref_s, roi, band, rw, rh, &score))
 		return;
 	apply_score(ctx, score);
 }
@@ -437,10 +447,11 @@ bool hud_mask_presence_save_ref(hud_mask *ctx, const uint8_t *luma, const uint8_
 
 	std::vector<uint8_t> mask(static_cast<size_t>(width) * height);
 	memcpy(mask.data(), mask_gray, mask.size());
-	std::vector<uint8_t> band;
-	mask_silhouette_band(mask, width, height, k_band_radius, band);
 	std::vector<uint8_t> lum(static_cast<size_t>(width) * height);
 	memcpy(lum.data(), luma, lum.size());
+	std::vector<uint8_t> band;
+	const int inset = std::max(1, std::min(width, height) / 12);
+	mask_presence_band(mask, &lum, width, height, inset, band);
 
 	ctx->ref_luma = lum;
 	ctx->ref_band = band;

@@ -655,40 +655,68 @@ bool mask_magic_shrinkwrap(const std::vector<MaskPoint> &loop, const std::vector
 	return out.size() >= 8;
 }
 
-void mask_silhouette_band(const std::vector<uint8_t> &mask, int width, int height, int radius,
-			  std::vector<uint8_t> &band)
+void mask_presence_band(const std::vector<uint8_t> &mask, const std::vector<uint8_t> *luma, int width, int height,
+			int inset, std::vector<uint8_t> &band)
 {
 	const int n = width * height;
 	band.assign(static_cast<size_t>(n), 0);
-	if (width <= 0 || height <= 0 || radius < 1 || static_cast<int>(mask.size()) < n)
+	if (width <= 0 || height <= 0 || static_cast<int>(mask.size()) < n)
 		return;
+	if (inset < 1)
+		inset = 1;
 
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++) {
-			const int i = y * width + x;
-			if (mask[static_cast<size_t>(i)] < 20)
-				continue;
-			bool near_empty = x < radius || y < radius || x >= width - radius || y >= height - radius;
-			if (!near_empty) {
-				for (int dy = -radius; dy <= radius && !near_empty; dy++) {
-					for (int dx = -radius; dx <= radius; dx++) {
-						if (dx * dx + dy * dy > radius * radius)
-							continue;
-						const int nx = x + dx;
-						const int ny = y + dy;
-						if (nx < 0 || ny < 0 || nx >= width || ny >= height)
-							continue;
-						if (mask[static_cast<size_t>(ny) * width + nx] < 20) {
-							near_empty = true;
-							break;
-						}
-					}
-				}
+	std::vector<uint8_t> inside(static_cast<size_t>(n), 0);
+	for (int i = 0; i < n; i++)
+		inside[static_cast<size_t>(i)] = mask[static_cast<size_t>(i)] >= 20 ? 1 : 0;
+
+	for (int pass = 0; pass < inset; pass++) {
+		std::vector<uint8_t> next = inside;
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				const int i = y * width + x;
+				if (!inside[static_cast<size_t>(i)])
+					continue;
+				if (x == 0 || y == 0 || x == width - 1 || y == height - 1 ||
+				    !inside[static_cast<size_t>(i - 1)] || !inside[static_cast<size_t>(i + 1)] ||
+				    !inside[static_cast<size_t>(i - width)] || !inside[static_cast<size_t>(i + width)])
+					next[static_cast<size_t>(i)] = 0;
 			}
-			if (near_empty)
-				band[static_cast<size_t>(i)] = 255;
+		}
+		inside.swap(next);
+	}
+
+	int keep = 0;
+	for (int i = 0; i < n; i++) {
+		if (inside[static_cast<size_t>(i)]) {
+			band[static_cast<size_t>(i)] = 255;
+			keep++;
 		}
 	}
+	if (keep < 16) {
+		/* Tiny mask: use the paint as-is. */
+		for (int i = 0; i < n; i++)
+			band[static_cast<size_t>(i)] = mask[static_cast<size_t>(i)] >= 20 ? 255 : 0;
+		return;
+	}
+
+	if (!luma || static_cast<int>(luma->size()) < n)
+		return;
+
+	std::vector<uint16_t> mag;
+	mask_sobel(*luma, width, height, mag);
+	int structured = 0;
+	std::vector<uint8_t> gated(static_cast<size_t>(n), 0);
+	const int mag_min = 28;
+	for (int i = 0; i < n; i++) {
+		if (band[static_cast<size_t>(i)] < 128)
+			continue;
+		if (mag[static_cast<size_t>(i)] >= mag_min) {
+			gated[static_cast<size_t>(i)] = 255;
+			structured++;
+		}
+	}
+	if (structured >= 24)
+		band.swap(gated);
 }
 
 void mask_resize_luma(const std::vector<uint8_t> &src, int src_w, int src_h, std::vector<uint8_t> &dst, int dst_w,
@@ -709,6 +737,12 @@ void mask_resize_luma(const std::vector<uint8_t> &src, int src_w, int src_h, std
 	}
 }
 
+void mask_resize_mask(const std::vector<uint8_t> &src, int src_w, int src_h, std::vector<uint8_t> &dst, int dst_w,
+		      int dst_h)
+{
+	mask_resize_luma(src, src_w, src_h, dst, dst_w, dst_h);
+}
+
 bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
 			 const std::vector<uint8_t> &band, int width, int height, float *score)
 {
@@ -716,19 +750,24 @@ bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector
 		return false;
 	*score = 0;
 	const int n = width * height;
-	if (width < 1 || height < 1)
+	if (width < 3 || height < 3)
 		return false;
 	if (static_cast<int>(ref_luma.size()) < n || static_cast<int>(cur_luma.size()) < n ||
 	    static_cast<int>(band.size()) < n)
 		return false;
+
+	std::vector<uint16_t> mag_r;
+	std::vector<uint16_t> mag_c;
+	mask_sobel(ref_luma, width, height, mag_r);
+	mask_sobel(cur_luma, width, height, mag_c);
 
 	double sum_r = 0, sum_c = 0;
 	int count = 0;
 	for (int i = 0; i < n; i++) {
 		if (band[static_cast<size_t>(i)] < 128)
 			continue;
-		sum_r += ref_luma[static_cast<size_t>(i)];
-		sum_c += cur_luma[static_cast<size_t>(i)];
+		sum_r += mag_r[static_cast<size_t>(i)];
+		sum_c += mag_c[static_cast<size_t>(i)];
 		count++;
 	}
 	if (count < 16)
@@ -740,8 +779,8 @@ bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector
 	for (int i = 0; i < n; i++) {
 		if (band[static_cast<size_t>(i)] < 128)
 			continue;
-		const double dr = ref_luma[static_cast<size_t>(i)] - mean_r;
-		const double dc = cur_luma[static_cast<size_t>(i)] - mean_c;
+		const double dr = mag_r[static_cast<size_t>(i)] - mean_r;
+		const double dc = mag_c[static_cast<size_t>(i)] - mean_c;
 		num += dr * dc;
 		den_r += dr * dr;
 		den_c += dc * dc;
@@ -765,5 +804,6 @@ float mask_presence_threshold(int match_percent)
 		match_percent = 0;
 	if (match_percent > 100)
 		match_percent = 100;
-	return 0.30f + 0.50f * (static_cast<float>(match_percent) / 100.0f);
+	/* 0 → 0.20 (lenient), 50 → 0.40, 100 → 0.60 */
+	return 0.20f + 0.40f * (static_cast<float>(match_percent) / 100.0f);
 }

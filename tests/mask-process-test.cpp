@@ -400,66 +400,76 @@ int main()
 		CHECK(near_outer * 2 > static_cast<int>(snapped.size()));
 	}
 
-	CHECK(mask_presence_threshold(0) >= 0.29f && mask_presence_threshold(0) <= 0.31f);
-	CHECK(mask_presence_threshold(100) >= 0.79f && mask_presence_threshold(100) <= 0.81f);
+	CHECK(mask_presence_threshold(0) >= 0.19f && mask_presence_threshold(0) <= 0.21f);
+	CHECK(mask_presence_threshold(100) >= 0.59f && mask_presence_threshold(100) <= 0.61f);
 	CHECK(mask_presence_threshold(50) > mask_presence_threshold(0));
 	CHECK(mask_presence_threshold(50) < mask_presence_threshold(100));
 
-	/* Presence: interior fill can change; the outer band is what matters. */
+	/* Presence matches HUD *shape*, not color or the world behind a loose mask. */
 	{
 		const int w = 48, h = 48;
 		std::vector<uint8_t> mask(static_cast<size_t>(w) * h, 0);
-		for (int y = 8; y <= 39; y++)
-			for (int x = 8; x <= 39; x++)
+		for (int y = 6; y <= 41; y++)
+			for (int x = 6; x <= 41; x++)
 				mask[static_cast<size_t>(y) * w + x] = 255;
 
+		auto make_panel = [&](uint8_t border, uint8_t fill, uint8_t world) {
+			std::vector<uint8_t> g(static_cast<size_t>(w) * h, world);
+			for (int y = 8; y <= 39; y++) {
+				for (int x = 8; x <= 39; x++) {
+					const bool rim = x <= 11 || x >= 36 || y <= 11 || y >= 36;
+					g[static_cast<size_t>(y) * w + x] = rim ? border : fill;
+				}
+			}
+			return g;
+		};
+
+		std::vector<uint8_t> gold = make_panel(210, 90, 30);
 		std::vector<uint8_t> band;
-		mask_silhouette_band(mask, w, h, 3, band);
+		mask_presence_band(mask, &gold, w, h, 3, band);
 		int band_n = 0;
-		int inner = 0;
+		int fringe = 0;
 		for (int y = 0; y < h; y++) {
 			for (int x = 0; x < w; x++) {
 				if (band[static_cast<size_t>(y) * w + x] < 128)
 					continue;
 				band_n++;
-				if (x >= 14 && x <= 33 && y >= 14 && y <= 33)
-					inner++;
+				if (x <= 7 || x >= 40 || y <= 7 || y >= 40)
+					fringe++;
 			}
 		}
 		CHECK(band_n > 40);
-		CHECK(inner == 0);
+		CHECK(fringe == 0);
 
-		std::vector<uint8_t> ref(static_cast<size_t>(w) * h, 20);
-		for (int y = 8; y <= 39; y++) {
-			for (int x = 8; x <= 39; x++) {
-				const bool rim = x <= 11 || x >= 36 || y <= 11 || y >= 36;
-				ref[static_cast<size_t>(y) * w + x] = rim ? 200 : 80;
-			}
-		}
-
-		/* Insides changed (minimap terrain / numbers). */
-		std::vector<uint8_t> walked = ref;
-		for (int y = 14; y <= 33; y++)
-			for (int x = 14; x <= 33; x++)
-				walked[static_cast<size_t>(y) * w + x] = static_cast<uint8_t>((x * 13 + y * 7) & 255);
 		float score = 0;
-		CHECK(mask_presence_score(ref, walked, band, w, h, &score));
+		/* Weapon theme recolor (gold → green), same silhouette. */
+		std::vector<uint8_t> green = make_panel(70, 40, 30);
+		CHECK(mask_presence_score(gold, green, band, w, h, &score));
 		CHECK(score > mask_presence_threshold(50));
 
-		/* Whole frame darkened, rim shape remains (modal overlay). */
-		std::vector<uint8_t> dim = ref;
+		/* World behind a slightly loose mask went from dark to bright. */
+		std::vector<uint8_t> bright_bg = make_panel(210, 90, 220);
+		CHECK(mask_presence_score(gold, bright_bg, band, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* Interior art changed (ammo / gun icon). */
+		std::vector<uint8_t> swapped = gold;
+		for (int y = 16; y <= 31; y++)
+			for (int x = 16; x <= 31; x++)
+				swapped[static_cast<size_t>(y) * w + x] = static_cast<uint8_t>((x + y) & 255);
+		CHECK(mask_presence_score(gold, swapped, band, w, h, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		/* Overlay darkened the whole HUD. */
+		std::vector<uint8_t> dim = gold;
 		for (uint8_t &p : dim)
 			p = static_cast<uint8_t>(p * 0.4f);
-		CHECK(mask_presence_score(ref, dim, band, w, h, &score));
+		CHECK(mask_presence_score(gold, dim, band, w, h, &score));
 		CHECK(score > mask_presence_threshold(50));
 
-		/* Outer band replaced with noise (HUD gone / empty slots). */
-		std::vector<uint8_t> gone = ref;
-		for (int i = 0; i < w * h; i++) {
-			if (band[static_cast<size_t>(i)] >= 128)
-				gone[static_cast<size_t>(i)] = static_cast<uint8_t>((i * 37) & 255);
-		}
-		CHECK(mask_presence_score(ref, gone, band, w, h, &score));
+		/* Widget gone: region is just world. */
+		std::vector<uint8_t> gone(static_cast<size_t>(w) * h, 180);
+		CHECK(mask_presence_score(gold, gone, band, w, h, &score));
 		CHECK(score < mask_presence_threshold(50));
 	}
 
