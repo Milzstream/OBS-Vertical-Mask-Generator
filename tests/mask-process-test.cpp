@@ -1,6 +1,8 @@
 #include "mask-process.hpp"
+#include "update-parse.hpp"
 
 #include <cstdio>
+#include <string>
 #include <vector>
 
 static int g_fails = 0;
@@ -254,6 +256,49 @@ int main()
 		auto copy = g;
 		mask_feather(g, 16, 16, 0);
 		CHECK(g == copy);
+	}
+
+	{
+		MaskVer a{};
+		MaskVer b{};
+		CHECK(mask_parse_ver("0.1.0", a));
+		CHECK(mask_parse_ver("v0.1.1", b));
+		CHECK(a.maj == 0 && a.min == 1 && a.pat == 0);
+		CHECK(b.maj == 0 && b.min == 1 && b.pat == 1);
+		CHECK(mask_cmp_ver(b, a) > 0);
+		CHECK(mask_cmp_ver(a, a) == 0);
+		CHECK(mask_cmp_ver(a, b) < 0);
+		CHECK(mask_parse_ver("1.2", a));
+		CHECK(a.maj == 1 && a.min == 2 && a.pat == 0);
+		CHECK(!mask_parse_ver("", a));
+		CHECK(!mask_parse_ver(nullptr, a));
+	}
+
+	{
+		const std::string json =
+			"{\n  \"tag_name\": \"0.1.1\",\n  \"prerelease\": false,\n"
+			"  \"html_url\": \"https://github.com/example/repo/releases/tag/0.1.1\",\n"
+			"  \"assets\": [\n"
+			"    {\"browser_download_url\": "
+			"\"https://github.com/example/repo/releases/download/0.1.1/"
+			"plugin-0.1.1-source.zip\"},\n"
+			"    {\"browser_download_url\": "
+			"\"https://github.com/example/repo/releases/download/0.1.1/"
+			"plugin-0.1.1-windows-x64.zip\"},\n"
+			"    {\"browser_download_url\": "
+			"\"https://github.com/example/repo/releases/download/0.1.1/"
+			"plugin-0.1.1-windows-x64.exe\"}\n"
+			"  ]\n}";
+		std::string tag;
+		std::string page;
+		std::string asset;
+		bool pre = true;
+		CHECK(mask_json_string_field(json, "tag_name", tag) && tag == "0.1.1");
+		CHECK(mask_json_string_field(json, "html_url", page) && page.find("0.1.1") != std::string::npos);
+		CHECK(mask_json_bool_field(json, "prerelease", pre) && !pre);
+		mask_find_windows_asset(json, asset);
+		CHECK(asset.size() >= 4 && asset.compare(asset.size() - 4, 4, ".exe") == 0);
+		CHECK(asset.find("windows") != std::string::npos);
 	}
 
 	if (g_fails) {

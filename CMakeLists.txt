@@ -45,6 +45,7 @@ target_sources(
           src/mask-process.hpp
           src/update-check.cpp
           src/update-check.hpp
+          src/update-parse.hpp
 )
 
 string(REGEX REPLACE "^https://github.com/" "" _gh_repo "${PLUGIN_WEBSITE}")

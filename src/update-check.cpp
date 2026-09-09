@@ -9,6 +9,7 @@ the Free Software Foundation; either version 2 of the License, or
 */
 
 #include "update-check.hpp"
+#include "update-parse.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -18,6 +19,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QMessageBox>
+#include <QObject>
 #include <QPushButton>
 #include <QUrl>
 #include <QWidget>
@@ -50,113 +52,12 @@ std::atomic<bool> g_cancel{false};
 std::thread g_worker;
 bool g_callback_added = false;
 
-struct Ver {
-	int maj = 0;
-	int min = 0;
-	int pat = 0;
-};
-
 struct ReleaseInfo {
 	std::string tag;
 	std::string page_url;
 	std::string download_url;
 	bool prerelease = false;
 };
-
-bool parse_ver(const char *s, Ver &v)
-{
-	if (!s || !*s)
-		return false;
-	while (*s == 'v' || *s == 'V')
-		s++;
-	v = {};
-	const int n = sscanf(s, "%d.%d.%d", &v.maj, &v.min, &v.pat);
-	return n >= 2;
-}
-
-int cmp_ver(Ver a, Ver b)
-{
-	if (a.maj != b.maj)
-		return a.maj < b.maj ? -1 : 1;
-	if (a.min != b.min)
-		return a.min < b.min ? -1 : 1;
-	if (a.pat != b.pat)
-		return a.pat < b.pat ? -1 : 1;
-	return 0;
-}
-
-bool json_skip_ws(const std::string &json, size_t &pos)
-{
-	while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\n' || json[pos] == '\r' || json[pos] == '\t'))
-		pos++;
-	return pos < json.size();
-}
-
-bool json_string_field(const std::string &json, const char *key, std::string &out)
-{
-	const std::string pat = std::string("\"") + key + "\":";
-	size_t pos = json.find(pat);
-	if (pos == std::string::npos)
-		return false;
-	pos += pat.size();
-	if (!json_skip_ws(json, pos) || json[pos] != '"')
-		return false;
-	pos++;
-	const size_t end = json.find('"', pos);
-	if (end == std::string::npos)
-		return false;
-	out = json.substr(pos, end - pos);
-	return !out.empty();
-}
-
-bool json_bool_field(const std::string &json, const char *key, bool &out)
-{
-	const std::string pat = std::string("\"") + key + "\":";
-	size_t pos = json.find(pat);
-	if (pos == std::string::npos)
-		return false;
-	pos += pat.size();
-	if (!json_skip_ws(json, pos))
-		return false;
-	if (json.compare(pos, 4, "true") == 0) {
-		out = true;
-		return true;
-	}
-	if (json.compare(pos, 5, "false") == 0) {
-		out = false;
-		return true;
-	}
-	return false;
-}
-
-void find_windows_asset(const std::string &json, std::string &url)
-{
-	std::string exe;
-	std::string zip;
-	const char *key = "\"browser_download_url\":";
-	size_t pos = 0;
-	while (true) {
-		pos = json.find(key, pos);
-		if (pos == std::string::npos)
-			break;
-		pos += std::strlen(key);
-		if (!json_skip_ws(json, pos) || json[pos] != '"')
-			break;
-		pos++;
-		const size_t end = json.find('"', pos);
-		if (end == std::string::npos)
-			break;
-		const std::string u = json.substr(pos, end - pos);
-		pos = end + 1;
-		if (u.find("windows") == std::string::npos)
-			continue;
-		if (u.size() >= 4 && u.compare(u.size() - 4, 4, ".exe") == 0)
-			exe = u;
-		else if (zip.empty() && u.size() >= 4 && u.compare(u.size() - 4, 4, ".zip") == 0)
-			zip = u;
-	}
-	url = !exe.empty() ? exe : zip;
-}
 
 char *config_file_path(void)
 {
@@ -267,15 +168,17 @@ bool fetch_latest(ReleaseInfo &info)
 	std::string body;
 	DWORD status = 0;
 	if (!http_get_https(L"api.github.com", path.c_str(), body, status)) {
-		obs_log(LOG_DEBUG, "update check failed (HTTP %lu)", (unsigned long)status);
+		obs_log(LOG_WARNING, "update check failed (HTTP %lu)", (unsigned long)status);
 		return false;
 	}
 
-	if (!json_string_field(body, "tag_name", info.tag))
+	if (!mask_json_string_field(body, "tag_name", info.tag)) {
+		obs_log(LOG_WARNING, "update check: no tag_name in GitHub response");
 		return false;
-	json_string_field(body, "html_url", info.page_url);
-	json_bool_field(body, "prerelease", info.prerelease);
-	find_windows_asset(body, info.download_url);
+	}
+	mask_json_string_field(body, "html_url", info.page_url);
+	mask_json_bool_field(body, "prerelease", info.prerelease);
+	mask_find_windows_asset(body, info.download_url);
 	return true;
 }
 
@@ -319,6 +222,12 @@ void show_update_dialog(const ReleaseInfo info)
 		obs_data_set_string(state, "skip_version", info.tag.c_str());
 		save_state(state);
 		obs_data_release(state);
+	} else {
+		obs_data_t *state = load_state();
+		obs_data_set_string(state, "later_tag", info.tag.c_str());
+		obs_data_set_int(state, "later_until", static_cast<int64_t>(time(nullptr)) + k_check_interval_sec);
+		save_state(state);
+		obs_data_release(state);
 	}
 }
 
@@ -327,50 +236,63 @@ void update_check_worker()
 	if (g_cancel.load())
 		return;
 
-	obs_data_t *state = load_state();
-	const int64_t now = static_cast<int64_t>(time(nullptr));
-	const int64_t last = obs_data_get_int(state, "last_check");
-	if (last > 0 && now - last < k_check_interval_sec) {
-		obs_data_release(state);
-		return;
-	}
+	obs_log(LOG_INFO, "checking for updates (installed %s)", PLUGIN_VERSION);
 
 	ReleaseInfo info;
-	if (!fetch_latest(info) || g_cancel.load()) {
-		obs_data_release(state);
+	if (!fetch_latest(info) || g_cancel.load())
 		return;
-	}
 
-	obs_data_set_int(state, "last_check", now);
+	obs_data_t *state = load_state();
+	obs_data_set_int(state, "last_check", static_cast<int64_t>(time(nullptr)));
+	obs_data_set_string(state, "last_tag", info.tag.c_str());
 	save_state(state);
 
 	const char *skipped = obs_data_get_string(state, "skip_version");
+	const char *later_tag = obs_data_get_string(state, "later_tag");
+	const int64_t later_until = obs_data_get_int(state, "later_until");
+	const int64_t now = static_cast<int64_t>(time(nullptr));
 	obs_data_release(state);
 
-	if (info.prerelease)
+	if (info.prerelease) {
+		obs_log(LOG_INFO, "update check: latest %s is a prerelease, skipping", info.tag.c_str());
 		return;
-	if (skipped && info.tag == skipped)
+	}
+	if (skipped && info.tag == skipped) {
+		obs_log(LOG_INFO, "update check: skipped %s", info.tag.c_str());
 		return;
+	}
+	if (later_tag && info.tag == later_tag && later_until > now) {
+		obs_log(LOG_INFO, "update check: snoozed %s", info.tag.c_str());
+		return;
+	}
 
-	Ver current{};
-	Ver latest{};
-	if (!parse_ver(PLUGIN_VERSION, current) || !parse_ver(info.tag.c_str(), latest))
+	MaskVer current{};
+	MaskVer latest{};
+	if (!mask_parse_ver(PLUGIN_VERSION, current) || !mask_parse_ver(info.tag.c_str(), latest)) {
+		obs_log(LOG_WARNING, "update check: could not parse versions (%s vs %s)", PLUGIN_VERSION,
+			info.tag.c_str());
 		return;
-	if (cmp_ver(latest, current) <= 0)
+	}
+	if (mask_cmp_ver(latest, current) <= 0) {
+		obs_log(LOG_INFO, "update check: up to date (%s)", PLUGIN_VERSION);
 		return;
+	}
 
 	obs_log(LOG_INFO, "update available: %s (installed %s)", info.tag.c_str(), PLUGIN_VERSION);
 
-	QCoreApplication *app = QCoreApplication::instance();
-	if (!app || g_cancel.load())
+	QWidget *main = static_cast<QWidget *>(obs_frontend_get_main_window());
+	QObject *ctx = main ? static_cast<QObject *>(main) : static_cast<QObject *>(QCoreApplication::instance());
+	if (!ctx || g_cancel.load())
 		return;
 
-	QMetaObject::invokeMethod(
-		app,
+	const bool queued = QMetaObject::invokeMethod(
+		ctx,
 		[info]() {
 			show_update_dialog(info);
 		},
 		Qt::QueuedConnection);
+	if (!queued)
+		obs_log(LOG_WARNING, "update check: could not show the update dialog");
 }
 
 void on_frontend_event(enum obs_frontend_event event, void *)
