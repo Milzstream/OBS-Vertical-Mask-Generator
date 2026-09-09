@@ -27,7 +27,12 @@ namespace {
 
 constexpr const char *k_id = "vertical_hud_mask";
 constexpr const char *k_kind = "target_kind";
+constexpr const char *k_canvas = "target_canvas";
 constexpr const char *k_source = "target";
+constexpr const char *k_same = "same_masks";
+constexpr int k_same_cap = 8;
+constexpr uint32_t k_canvas_flag_main = 1u << 0;
+constexpr uint32_t k_canvas_flag_ephemeral = 1u << 4;
 constexpr const char *k_crop_left = "crop_left";
 constexpr const char *k_crop_top = "crop_top";
 constexpr const char *k_crop_right = "crop_right";
@@ -39,6 +44,41 @@ constexpr const char *k_auto_hide = "auto_hide";
 
 gs_effect_t *mask_effect = nullptr;
 
+obs_canvas_t *find_canvas_by_uuid(const char *uuid)
+{
+	struct find_canvas_ctx {
+		const char *uuid = nullptr;
+		obs_canvas_t *found = nullptr;
+	} e{uuid, nullptr};
+
+	auto cb = [](void *param, obs_canvas_t *canvas) -> bool {
+		auto *f = static_cast<find_canvas_ctx *>(param);
+		if (!canvas)
+			return true;
+		if (obs_canvas_get_flags(canvas) & k_canvas_flag_ephemeral)
+			return true;
+		const char *id = obs_canvas_get_uuid(canvas);
+		if (f->uuid && f->uuid[0]) {
+			if (id && strcmp(id, f->uuid) == 0) {
+				f->found = obs_canvas_get_ref(canvas);
+				return false;
+			}
+			return true;
+		}
+		if (obs_canvas_get_flags(canvas) & k_canvas_flag_main) {
+			f->found = obs_canvas_get_ref(canvas);
+			return false;
+		}
+		return true;
+	};
+	obs_enum_canvases(cb, &e);
+	if (e.found)
+		return e.found;
+	if (uuid && uuid[0])
+		return nullptr;
+	return obs_get_main_canvas();
+}
+
 obs_source_t *acquire_target(hud_mask *ctx)
 {
 	if (ctx->target)
@@ -47,7 +87,20 @@ obs_source_t *acquire_target(hud_mask *ctx)
 	if (ctx->target_name.empty())
 		return nullptr;
 
-	obs_source_t *source = obs_get_source_by_name(ctx->target_name.c_str());
+	obs_source_t *source = nullptr;
+	if (!ctx->canvas_uuid.empty()) {
+		obs_canvas_t *canvas = find_canvas_by_uuid(ctx->canvas_uuid.c_str());
+		if (canvas) {
+			obs_scene_t *scene = obs_canvas_get_scene_by_name(canvas, ctx->target_name.c_str());
+			obs_canvas_release(canvas);
+			if (scene) {
+				source = obs_source_get_ref(obs_scene_get_source(scene));
+				obs_scene_release(scene);
+			}
+		}
+	}
+	if (!source)
+		source = obs_get_source_by_name(ctx->target_name.c_str());
 	if (!source)
 		return nullptr;
 
@@ -213,6 +266,8 @@ void hud_mask_destroy(void *data)
 void hud_mask_update(void *data, obs_data_t *settings)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
+	const char *canvas = obs_data_get_string(settings, k_canvas);
+	ctx->canvas_uuid = canvas ? canvas : "";
 	set_target(ctx, obs_data_get_string(settings, k_source));
 	ctx->crop_left = static_cast<int>(obs_data_get_int(settings, k_crop_left));
 	ctx->crop_top = static_cast<int>(obs_data_get_int(settings, k_crop_top));
@@ -228,6 +283,13 @@ void hud_mask_update(void *data, obs_data_t *settings)
 void hud_mask_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, k_kind, "source");
+	{
+		obs_canvas_t *main = obs_get_main_canvas();
+		const char *uuid = main ? obs_canvas_get_uuid(main) : "";
+		obs_data_set_default_string(settings, k_canvas, uuid ? uuid : "");
+		if (main)
+			obs_canvas_release(main);
+	}
 	obs_data_set_default_string(settings, k_source, "");
 	obs_data_set_default_int(settings, k_crop_left, 0);
 	obs_data_set_default_int(settings, k_crop_top, 0);
@@ -273,7 +335,50 @@ bool collect_targets(void *param, obs_source_t *source)
 	return true;
 }
 
-void fill_target_list(obs_property_t *list, const char *kind, obs_source_t *self)
+void fill_canvas_list(obs_property_t *list)
+{
+	obs_property_list_clear(list);
+
+	struct canvas_item {
+		std::string name;
+		std::string uuid;
+		bool main = false;
+	};
+	std::vector<canvas_item> items;
+
+	auto cb = [](void *param, obs_canvas_t *canvas) -> bool {
+		auto *out = static_cast<std::vector<canvas_item> *>(param);
+		if (!canvas)
+			return true;
+		const uint32_t flags = obs_canvas_get_flags(canvas);
+		if (flags & k_canvas_flag_ephemeral)
+			return true;
+		const char *uuid = obs_canvas_get_uuid(canvas);
+		if (!uuid || !uuid[0])
+			return true;
+		const char *name = obs_canvas_get_name(canvas);
+		canvas_item item;
+		item.uuid = uuid;
+		item.main = (flags & k_canvas_flag_main) != 0;
+		item.name = (name && name[0]) ? name
+					     : (item.main ? obs_module_text("HUDMask.Canvas.Main") : uuid);
+		out->push_back(std::move(item));
+		return true;
+	};
+	obs_enum_canvases(cb, &items);
+
+	std::sort(items.begin(), items.end(), [](const canvas_item &a, const canvas_item &b) {
+		if (a.main != b.main)
+			return a.main;
+		return a.name < b.name;
+	});
+	if (items.empty())
+		obs_property_list_add_string(list, obs_module_text("HUDMask.Canvas.Main"), "");
+	for (const auto &item : items)
+		obs_property_list_add_string(list, item.name.c_str(), item.uuid.c_str());
+}
+
+void fill_target_list(obs_property_t *list, const char *kind, const char *canvas_uuid, obs_source_t *self)
 {
 	obs_property_list_clear(list);
 	obs_property_list_add_string(list, obs_module_text("HUDMask.Source.None"), "");
@@ -281,10 +386,17 @@ void fill_target_list(obs_property_t *list, const char *kind, obs_source_t *self
 	const bool scenes = kind && strcmp(kind, "scene") == 0;
 	std::vector<std::string> names;
 	collect_ctx e{&names, scenes, self};
-	if (scenes)
-		obs_enum_scenes(collect_targets, &e);
-	else
+	if (scenes) {
+		obs_canvas_t *canvas = find_canvas_by_uuid(canvas_uuid);
+		if (canvas) {
+			obs_canvas_enum_scenes(canvas, collect_targets, &e);
+			obs_canvas_release(canvas);
+		} else {
+			obs_enum_scenes(collect_targets, &e);
+		}
+	} else {
 		obs_enum_sources(collect_targets, &e);
+	}
 
 	std::sort(names.begin(), names.end());
 	names.erase(std::unique(names.begin(), names.end()), names.end());
@@ -294,11 +406,90 @@ void fill_target_list(obs_property_t *list, const char *kind, obs_source_t *self
 	obs_property_set_description(list, obs_module_text(scenes ? "HUDMask.Scene" : "HUDMask.Source"));
 }
 
+struct same_mask_ctx {
+	obs_source_t *self = nullptr;
+	const char *target = nullptr;
+	std::vector<std::string> *names = nullptr;
+};
+
+bool collect_same_masks(void *param, obs_source_t *source)
+{
+	auto *e = static_cast<same_mask_ctx *>(param);
+	if (!source || source == e->self)
+		return true;
+	const char *id = obs_source_get_unversioned_id(source);
+	if (!id || strcmp(id, k_id) != 0)
+		return true;
+	obs_data_t *s = obs_source_get_settings(source);
+	if (!s)
+		return true;
+	const char *t = obs_data_get_string(s, k_source);
+	if (e->target && t && strcmp(e->target, t) == 0) {
+		const char *n = obs_source_get_name(source);
+		if (n && n[0])
+			e->names->emplace_back(n);
+	}
+	obs_data_release(s);
+	return true;
+}
+
+void fill_same_masks(obs_properties_t *props, obs_source_t *self, obs_data_t *settings)
+{
+	obs_property_t *prop = obs_properties_get(props, k_same);
+	if (!prop || !settings)
+		return;
+	const char *target = obs_data_get_string(settings, k_source);
+	std::vector<std::string> names;
+	if (target && target[0]) {
+		same_mask_ctx e{self, target, &names};
+		obs_enum_sources(collect_same_masks, &e);
+	}
+	std::sort(names.begin(), names.end());
+	if (names.empty()) {
+		obs_data_unset_user_value(settings, k_same);
+		obs_property_set_visible(prop, false);
+		return;
+	}
+	std::string text;
+	for (size_t i = 0; i < names.size() && i < static_cast<size_t>(k_same_cap); i++) {
+		if (i)
+			text += "\n";
+		text += names[i];
+	}
+	if (names.size() > static_cast<size_t>(k_same_cap))
+		text += "\n...";
+	obs_data_set_string(settings, k_same, text.c_str());
+	obs_property_set_visible(prop, true);
+}
+
 bool kind_modified(void *priv, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
 	auto *ctx = static_cast<hud_mask *>(priv);
-	fill_target_list(obs_properties_get(props, k_source), obs_data_get_string(settings, k_kind),
+	const char *kind = obs_data_get_string(settings, k_kind);
+	const bool scenes = kind && strcmp(kind, "scene") == 0;
+	obs_property_t *canvas = obs_properties_get(props, k_canvas);
+	obs_property_set_visible(canvas, scenes);
+	if (scenes)
+		fill_canvas_list(canvas);
+	fill_target_list(obs_properties_get(props, k_source), kind, obs_data_get_string(settings, k_canvas),
 			 ctx ? ctx->self : nullptr);
+	fill_same_masks(props, ctx ? ctx->self : nullptr, settings);
+	return true;
+}
+
+bool canvas_modified(void *priv, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	auto *ctx = static_cast<hud_mask *>(priv);
+	fill_target_list(obs_properties_get(props, k_source), obs_data_get_string(settings, k_kind),
+			 obs_data_get_string(settings, k_canvas), ctx ? ctx->self : nullptr);
+	fill_same_masks(props, ctx ? ctx->self : nullptr, settings);
+	return true;
+}
+
+bool source_modified(void *priv, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	auto *ctx = static_cast<hud_mask *>(priv);
+	fill_same_masks(props, ctx ? ctx->self : nullptr, settings);
 	return true;
 }
 
@@ -319,9 +510,44 @@ obs_properties_t *hud_mask_properties(void *data)
 	obs_property_list_add_string(kind, obs_module_text("HUDMask.Type.Scene"), "scene");
 	obs_property_set_modified_callback2(kind, kind_modified, ctx);
 
+	obs_property_t *canvas = obs_properties_add_list(props, k_canvas, obs_module_text("HUDMask.Canvas"),
+							 OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	fill_canvas_list(canvas);
+	obs_property_set_modified_callback2(canvas, canvas_modified, ctx);
+
 	obs_property_t *targets = obs_properties_add_list(props, k_source, obs_module_text("HUDMask.Source"),
 							  OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-	fill_target_list(targets, "source", ctx ? ctx->self : nullptr);
+	obs_property_set_modified_callback2(targets, source_modified, ctx);
+
+	const char *kind_val = "source";
+	const char *canvas_val = "";
+	if (ctx && ctx->self) {
+		obs_data_t *settings = obs_source_get_settings(ctx->self);
+		if (settings) {
+			kind_val = obs_data_get_string(settings, k_kind);
+			canvas_val = obs_data_get_string(settings, k_canvas);
+			const bool scenes = kind_val && strcmp(kind_val, "scene") == 0;
+			obs_property_set_visible(canvas, scenes);
+			fill_target_list(targets, kind_val, canvas_val, ctx->self);
+			obs_data_release(settings);
+		} else {
+			obs_property_set_visible(canvas, false);
+			fill_target_list(targets, "source", "", ctx->self);
+		}
+	} else {
+		obs_property_set_visible(canvas, false);
+		fill_target_list(targets, "source", "", nullptr);
+	}
+
+	obs_property_t *same = obs_properties_add_text(props, k_same, obs_module_text("HUDMask.SameMasks"), OBS_TEXT_INFO);
+	obs_property_set_visible(same, false);
+	if (ctx && ctx->self) {
+		obs_data_t *cur = obs_source_get_settings(ctx->self);
+		if (cur) {
+			fill_same_masks(props, ctx->self, cur);
+			obs_data_release(cur);
+		}
+	}
 
 	obs_properties_add_button2(props, "draw_mask", obs_module_text("HUDMask.DrawMask"), draw_mask_clicked, ctx);
 

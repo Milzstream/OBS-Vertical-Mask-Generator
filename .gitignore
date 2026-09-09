@@ -1,6 +1,9 @@
 # Exclude everything
 /*
 
+# Local copy-into-OBS helper
+/easy.bat
+
 # Project files
 !/.github
 !/build-aux

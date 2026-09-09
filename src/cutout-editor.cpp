@@ -10,6 +10,7 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include "cutout-editor.hpp"
 #include "hud-mask.hpp"
+#include "mask-process.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -17,22 +18,26 @@ the Free Software Foundation; either version 2 of the License, or
 #include <util/platform.h>
 #include <plugin-support.h>
 
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDialog>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QMessageBox>
 #include <QEvent>
+#include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineF>
+#include <QMessageBox>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QPointer>
 #include <QPolygon>
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QSlider>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWidget>
@@ -49,13 +54,17 @@ namespace {
 
 struct CaptureJob {
 	std::atomic<bool> cancelled{false};
+	std::atomic<bool> uiPending{false};
 	obs_weak_source_t *weak = nullptr;
 	gs_texrender_t *texrender = nullptr;
 	gs_stagesurf_t *stagesurf = nullptr;
 	uint32_t cx = 0;
 	uint32_t cy = 0;
 	int stage = 0;
+	int skip = 0;
 	bool loadExisting = false;
+	bool live = false;
+	bool heldShowing = false;
 	std::function<void(QImage, bool)> onFrame;
 	std::function<void()> onFail;
 };
@@ -73,6 +82,9 @@ void capture_fail(CaptureJob *job)
 		gs_texrender_destroy(job->texrender);
 		job->texrender = nullptr;
 	}
+	job->stage = 0;
+	if (job->live)
+		return;
 	obs_remove_tick_callback(capture_tick, job);
 	auto fail = job->onFail;
 	QMetaObject::invokeMethod(
@@ -90,6 +102,11 @@ void capture_tick(void *param, float)
 	if (job->cancelled.load())
 		return;
 
+	if (job->live && job->skip > 0) {
+		job->skip--;
+		return;
+	}
+
 	obs_enter_graphics();
 
 	if (job->stage == 0) {
@@ -100,19 +117,33 @@ void capture_tick(void *param, float)
 			return;
 		}
 
-		job->cx = obs_source_get_width(source);
-		job->cy = obs_source_get_height(source);
-		if (!job->cx || !job->cy) {
+		const uint32_t cx = obs_source_get_width(source);
+		const uint32_t cy = obs_source_get_height(source);
+		if (!cx || !cy) {
 			obs_source_release(source);
 			capture_fail(job);
 			obs_leave_graphics();
 			return;
 		}
 
+		if (job->texrender && (job->cx != cx || job->cy != cy)) {
+			gs_texrender_destroy(job->texrender);
+			job->texrender = nullptr;
+			if (job->stagesurf) {
+				gs_stagesurface_destroy(job->stagesurf);
+				job->stagesurf = nullptr;
+			}
+		}
+		job->cx = cx;
+		job->cy = cy;
+
 		const enum gs_color_space space = GS_CS_SRGB;
 		const enum gs_color_format format = gs_get_format_from_space(space);
-		job->texrender = gs_texrender_create(format, GS_ZS_NONE);
-		job->stagesurf = gs_stagesurface_create(job->cx, job->cy, format);
+		if (!job->texrender)
+			job->texrender = gs_texrender_create(format, GS_ZS_NONE);
+		if (!job->stagesurf)
+			job->stagesurf = gs_stagesurface_create(job->cx, job->cy, format);
+		gs_texrender_reset(job->texrender);
 
 		if (gs_texrender_begin_with_color_space(job->texrender, job->cx, job->cy, space)) {
 			struct vec4 zero;
@@ -121,9 +152,17 @@ void capture_tick(void *param, float)
 			gs_ortho(0.0f, (float)job->cx, 0.0f, (float)job->cy, -100.0f, 100.0f);
 			gs_blend_state_push();
 			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-			obs_source_inc_showing(source);
+			if (job->live) {
+				if (!job->heldShowing) {
+					obs_source_inc_showing(source);
+					job->heldShowing = true;
+				}
+			} else {
+				obs_source_inc_showing(source);
+			}
 			obs_source_video_render(source);
-			obs_source_dec_showing(source);
+			if (!job->live)
+				obs_source_dec_showing(source);
 			gs_blend_state_pop();
 			gs_texrender_end(job->texrender);
 		}
@@ -147,18 +186,24 @@ void capture_tick(void *param, float)
 			gs_stagesurface_unmap(job->stagesurf);
 		}
 
-		if (job->stagesurf) {
-			gs_stagesurface_destroy(job->stagesurf);
-			job->stagesurf = nullptr;
+		if (!job->live) {
+			if (job->stagesurf) {
+				gs_stagesurface_destroy(job->stagesurf);
+				job->stagesurf = nullptr;
+			}
+			if (job->texrender) {
+				gs_texrender_destroy(job->texrender);
+				job->texrender = nullptr;
+			}
+			obs_remove_tick_callback(capture_tick, job);
 		}
-		if (job->texrender) {
-			gs_texrender_destroy(job->texrender);
-			job->texrender = nullptr;
-		}
-		obs_remove_tick_callback(capture_tick, job);
 		obs_leave_graphics();
 
 		if (image.isNull()) {
+			if (job->live) {
+				job->stage = 0;
+				return;
+			}
 			auto fail = job->onFail;
 			QMetaObject::invokeMethod(
 				QCoreApplication::instance(),
@@ -171,20 +216,50 @@ void capture_tick(void *param, float)
 		}
 
 		const bool loadExisting = job->loadExisting;
-		const QImage copy = image.copy();
-		auto cb = job->onFrame;
-		QMetaObject::invokeMethod(
-			QCoreApplication::instance(),
-			[cb, copy, loadExisting]() {
-				if (cb)
-					cb(copy, loadExisting);
-			},
-			Qt::QueuedConnection);
+		job->loadExisting = false;
+		if (!job->live || !job->uiPending.exchange(true)) {
+			const QImage copy = image.copy();
+			auto cb = job->onFrame;
+			QMetaObject::invokeMethod(
+				QCoreApplication::instance(),
+				[cb, copy, loadExisting]() {
+					if (cb)
+						cb(copy, loadExisting);
+				},
+				Qt::QueuedConnection);
+		}
+
+		if (job->live) {
+			job->stage = 0;
+			job->skip = 2;
+		}
 		return;
 	}
 
 	obs_leave_graphics();
 	job->stage++;
+}
+
+enum class BrushShape { Circle, Square };
+enum class EditorTool { Paint, Line, Fill, Magic };
+
+QCursor make_bucket_cursor()
+{
+	QPixmap pm(24, 24);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing, true);
+	p.setPen(QPen(Qt::white, 1.4));
+	p.setBrush(QColor(80, 220, 255));
+	QPolygon body;
+	body << QPoint(5, 9) << QPoint(17, 9) << QPoint(15, 19) << QPoint(7, 19);
+	p.drawPolygon(body);
+	p.setBrush(Qt::NoBrush);
+	p.drawArc(11, 3, 9, 9, 20 * 16, 200 * 16);
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(255, 60, 180));
+	p.drawEllipse(15, 18, 5, 5);
+	return QCursor(pm, 3, 20);
 }
 
 class MaskCanvas : public QWidget {
@@ -193,6 +268,8 @@ public:
 	QImage mask;
 	int brush = 28;
 	bool erase = false;
+	BrushShape shape = BrushShape::Circle;
+	EditorTool tool = EditorTool::Paint;
 
 	explicit MaskCanvas(QWidget *parent = nullptr) : QWidget(parent)
 	{
@@ -200,9 +277,39 @@ public:
 		setFocusPolicy(Qt::StrongFocus);
 		setMinimumSize(640, 360);
 		setCursor(Qt::CrossCursor);
+		dwell_ = new QTimer(this);
+		dwell_->setSingleShot(true);
+		dwell_->setInterval(300);
+		connect(dwell_, &QTimer::timeout, this, [this]() {
+			if (!lineDragging_)
+				return;
+			lineStraight_ = true;
+			lineFreehand_.clear();
+			update();
+		});
+	}
+
+	void setTool(EditorTool t)
+	{
+		cancelLineDrag();
+		magicPath_.clear();
+		magicDragging_ = false;
+		tool = t;
+		updateCursor();
+		if (toolChanged)
+			toolChanged();
+		update();
 	}
 
 	double zoom() const { return zoom_; }
+	int zoomPercent() const { return static_cast<int>(std::lround(zoom_ * 100)); }
+	void setZoomPercent(int percent)
+	{
+		zoom_ = std::clamp(percent / 100.0, 1.0, 16.0);
+		if (viewChanged)
+			viewChanged();
+		update();
+	}
 	void resetView()
 	{
 		zoom_ = 1.0;
@@ -216,22 +323,29 @@ public:
 	{
 		spaceDown_ = down;
 		if (!panning_)
-			setCursor(down ? Qt::OpenHandCursor : Qt::CrossCursor);
+			updateCursor();
 	}
 
 	std::function<void()> viewChanged;
+	std::function<void()> brushChanged;
+	std::function<void()> undoChanged;
+	std::function<void()> toolChanged;
 
 	void setFrame(const QImage &img)
 	{
+		const bool first = frame.isNull();
+		const QSize prev = frame.size();
 		frame = img.convertToFormat(QImage::Format_ARGB32);
 		if (mask.size() != frame.size()) {
 			mask = QImage(frame.size(), QImage::Format_Grayscale8);
 			mask.fill(0);
 		}
-		zoom_ = 1.0;
-		viewCenter_ = QPointF(frame.width() / 2.0, frame.height() / 2.0);
-		if (viewChanged)
-			viewChanged();
+		if (first || prev != frame.size()) {
+			zoom_ = 1.0;
+			viewCenter_ = QPointF(frame.width() / 2.0, frame.height() / 2.0);
+			if (viewChanged)
+				viewChanged();
+		}
 		update();
 	}
 
@@ -246,12 +360,38 @@ public:
 
 	void clearMask()
 	{
-		if (!mask.isNull())
-			mask.fill(0);
+		if (mask.isNull())
+			return;
+		pushUndo();
+		mask.fill(0);
 		update();
 	}
 
-	bool snapToEdges()
+	bool canUndo() const { return hasUndo_; }
+
+	void undo()
+	{
+		if (!hasUndo_ || undoMask_.isNull())
+			return;
+		mask = undoMask_;
+		hasUndo_ = false;
+		undoMask_ = QImage();
+		if (undoChanged)
+			undoChanged();
+		update();
+	}
+
+	void pushUndo()
+	{
+		if (mask.isNull())
+			return;
+		undoMask_ = mask.copy();
+		hasUndo_ = true;
+		if (undoChanged)
+			undoChanged();
+	}
+
+	bool snapEdges()
 	{
 		if (frame.isNull() || mask.isNull())
 			return false;
@@ -331,34 +471,22 @@ public:
 			}
 		}
 
-		auto ringScore = [&](double cx, double cy, double r) -> int {
-			const int samples = 160;
-			int sum = 0;
-			int hit = 0;
-			for (int i = 0; i < samples; i++) {
-				const double a = (2.0 * 3.14159265358979323846 * i) / samples;
-				const int x = static_cast<int>(std::lround(cx + r * std::cos(a)));
-				const int y = static_cast<int>(std::lround(cy + r * std::sin(a)));
-				if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1)
-					continue;
-				sum += mag[y * w + x];
-				hit++;
-			}
-			return hit > samples / 2 ? sum / hit : 0;
-		};
-
 		std::vector<uint8_t> bin(static_cast<size_t>(w) * h, 0);
-		QImage layer(w, h, QImage::Format_Grayscale8);
 		bool any = false;
+		const int search = std::max(4, std::min(8, brush / 4));
+		const int thresh = std::max(28, maxMag / 3);
 
 		for (int lab = 1; lab <= nlab; lab++) {
-			int count = 0, bx0 = w, by0 = h, bx1 = 0, by1 = 0;
+			int count = 0;
+			double sx = 0, sy = 0;
+			int bx0 = w, by0 = h, bx1 = 0, by1 = 0;
 			for (int y = 0; y < h; y++) {
 				for (int x = 0; x < w; x++) {
-					const int i = y * w + x;
-					if (label[i] != lab)
+					if (label[y * w + x] != lab)
 						continue;
 					count++;
+					sx += x;
+					sy += y;
 					bx0 = std::min(bx0, x);
 					by0 = std::min(by0, y);
 					bx1 = std::max(bx1, x);
@@ -367,63 +495,60 @@ public:
 			}
 			if (count < 40)
 				continue;
-			const int bw = bx1 - bx0 + 1;
-			const int bh = by1 - by0 + 1;
-			const double aspect = static_cast<double>(std::min(bw, bh)) / std::max(bw, bh);
-			const double fill = static_cast<double>(count) / (bw * bh);
-			const bool roundish = aspect >= 0.78 && fill >= 0.52;
 
+			const double cx = sx / count;
+			const double cy = sy / count;
+			QPolygonF poly;
+			const int rays = 160;
+			for (int i = 0; i < rays; i++) {
+				const double a = (2.0 * 3.14159265358979323846 * i) / rays;
+				const double dx = std::cos(a);
+				const double dy = std::sin(a);
+				int exitT = -1;
+				const int maxT = std::max(8, std::max(bx1 - bx0, by1 - by0));
+				for (int t = 0; t <= maxT + search; t++) {
+					const int x = static_cast<int>(std::lround(cx + dx * t));
+					const int y = static_cast<int>(std::lround(cy + dy * t));
+					if (x < 0 || y < 0 || x >= w || y >= h)
+						break;
+					if (label[y * w + x] == lab)
+						exitT = t;
+				}
+				if (exitT < 0)
+					continue;
+				int bestT = exitT;
+				double bestScore = -1;
+				for (int t = std::max(0, exitT - search); t <= exitT + search; t++) {
+					const int x = static_cast<int>(std::lround(cx + dx * t));
+					const int y = static_cast<int>(std::lround(cy + dy * t));
+					if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1)
+						continue;
+					const int m = mag[y * w + x];
+					const double fall = 1.0 - 0.8 * std::abs(t - exitT) / (double)search;
+					const double score = m * fall;
+					if (score > bestScore) {
+						bestScore = score;
+						bestT = t;
+					}
+				}
+				if (bestScore < thresh)
+					bestT = exitT;
+				poly << QPointF(cx + dx * bestT, cy + dy * bestT);
+			}
+			if (poly.size() < 8)
+				continue;
+
+			QImage layer(w, h, QImage::Format_Grayscale8);
 			layer.fill(0);
 			QPainter lp(&layer);
 			lp.setRenderHint(QPainter::Antialiasing, true);
 			lp.setPen(Qt::NoPen);
 			lp.setBrush(Qt::white);
-
-			if (roundish) {
-				/* Size comes from the paint, not an inner HUD ring. */
-				const double cx = (bx0 + bx1) * 0.5;
-				const double cy = (by0 + by1) * 0.5;
-				int rOuter = std::max(6, std::min(bw, bh) / 2);
-				int bestR = rOuter;
-				int bestS = ringScore(cx, cy, rOuter);
-				const int r1 = rOuter + 3;
-				for (int r = rOuter; r <= r1; r++) {
-					const int s = ringScore(cx, cy, r);
-					if (s >= bestS) {
-						bestS = s;
-						bestR = r;
-					}
-				}
-				lp.drawEllipse(QPointF(cx, cy), bestR, bestR);
-			} else {
-				const int rad = 4;
-				for (int y = std::max(0, by0 - rad); y <= std::min(h - 1, by1 + rad); y++) {
-					for (int x = std::max(0, bx0 - rad); x <= std::min(w - 1, bx1 + rad); x++) {
-						bool hit = false;
-						for (int dy = -rad; dy <= rad && !hit; dy++) {
-							for (int dx = -rad; dx <= rad; dx++) {
-								if (dx * dx + dy * dy > rad * rad)
-									continue;
-								const int nx = x + dx;
-								const int ny = y + dy;
-								if (nx < 0 || ny < 0 || nx >= w || ny >= h)
-									continue;
-								if (label[ny * w + nx] == lab) {
-									hit = true;
-									break;
-								}
-							}
-						}
-						if (hit)
-							layer.scanLine(y)[x] = 255;
-					}
-				}
-			}
+			lp.drawPolygon(poly);
 			lp.end();
-
-			for (int y = 0; y < h; y++) {
+			for (int y = by0; y <= by1; y++) {
 				const uint8_t *src = layer.constScanLine(y);
-				for (int x = 0; x < w; x++) {
+				for (int x = bx0; x <= bx1; x++) {
 					if (src[x] >= 128)
 						bin[y * w + x] = 255;
 				}
@@ -434,7 +559,9 @@ public:
 		if (!any)
 			return false;
 
-		const int feather = 6;
+		pushUndo();
+
+		const int feather = 3;
 		std::vector<int> dist(static_cast<size_t>(w) * h, 9999);
 		stack.clear();
 		for (int y = 0; y < h; y++) {
@@ -490,6 +617,66 @@ public:
 		return true;
 	}
 
+	void fillAt(const QPointF &src)
+	{
+		if (mask.isNull())
+			return;
+		const int w = mask.width();
+		const int h = mask.height();
+		int x = static_cast<int>(std::lround(src.x()));
+		int y = static_cast<int>(std::lround(src.y()));
+		if (x < 0 || y < 0 || x >= w || y >= h)
+			return;
+
+		if (!erase && closedPoly_.size() >= 4 &&
+		    closedPoly_.containsPoint(src, Qt::OddEvenFill)) {
+			pushUndo();
+			QPainter fp(&mask);
+			fp.setRenderHint(QPainter::Antialiasing, false);
+			fp.setPen(QPen(Qt::white, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+			fp.setBrush(Qt::white);
+			fp.drawPolygon(closedPoly_);
+			closedPoly_.clear();
+			update();
+			return;
+		}
+
+		std::vector<uint8_t> gray(static_cast<size_t>(w) * h);
+		for (int yy = 0; yy < h; yy++)
+			memcpy(gray.data() + static_cast<size_t>(yy) * w, mask.constScanLine(yy),
+			       static_cast<size_t>(w));
+		const bool ok = erase ? mask_flood_erase(gray, w, h, x, y)
+				      : mask_flood_fill(gray, w, h, x, y, true);
+		if (!ok)
+			return;
+		pushUndo();
+		for (int yy = 0; yy < h; yy++)
+			memcpy(mask.scanLine(yy), gray.data() + static_cast<size_t>(yy) * w, static_cast<size_t>(w));
+		update();
+	}
+
+	void closePolyline()
+	{
+		if (linePts_.size() < 3)
+			return;
+		pushUndo();
+		strokeOnMask(linePts_.back(), linePts_.front());
+		closedPoly_ = linePts_;
+		closedPoly_ << linePts_.front();
+		linePts_.clear();
+		update();
+	}
+
+	void cancelLineDrag()
+	{
+		if (dwell_)
+			dwell_->stop();
+		lineDragging_ = false;
+		lineStraight_ = false;
+		lineFreehand_.clear();
+		update();
+	}
+
 protected:
 	void paintEvent(QPaintEvent *) override
 	{
@@ -525,11 +712,44 @@ protected:
 			p.drawImage(dest, overlay);
 		}
 
-		if (cursorOn_) {
+		p.setRenderHint(QPainter::Antialiasing, true);
+		auto drawPreviewLine = [&](const QPoint &a, const QPoint &b, int srcWidth) {
+			const int wgt = std::max(2, srcToWidgetLen(std::max(2, srcWidth)));
+			p.setPen(QPen(QColor(255, 60, 180), wgt + 2, Qt::SolidLine, Qt::RoundCap));
+			p.drawLine(a, b);
+			p.setPen(QPen(QColor(255, 255, 255), wgt, Qt::SolidLine, Qt::RoundCap));
+			p.drawLine(a, b);
+		};
+		if (tool == EditorTool::Line && lineDragging_ && !linePts_.empty()) {
+			p.setBrush(Qt::NoBrush);
+			QPen cyan(QColor(80, 220, 255), 2);
+			cyan.setCapStyle(Qt::RoundCap);
+			p.setPen(cyan);
+			if (lineStraight_) {
+				p.drawLine(srcToWidget(linePts_.back()), srcToWidget(cursorSrc_));
+			} else if (lineFreehand_.size() >= 2) {
+				for (int i = 1; i < lineFreehand_.size(); i++)
+					p.drawLine(srcToWidget(lineFreehand_[i - 1]), srcToWidget(lineFreehand_[i]));
+			}
+		}
+		if (tool == EditorTool::Magic && magicPath_.size() >= 2) {
+			p.setBrush(Qt::NoBrush);
+			QPen cyan(QColor(80, 220, 255), 2);
+			cyan.setCapStyle(Qt::RoundCap);
+			p.setPen(cyan);
+			for (int i = 1; i < magicPath_.size(); i++)
+				p.drawLine(srcToWidget(magicPath_[i - 1]), srcToWidget(magicPath_[i]));
+		}
+
+		if (cursorOn_ && tool == EditorTool::Paint) {
 			p.setPen(QPen(erase ? QColor(255, 80, 80) : QColor(255, 230, 80), 1));
 			p.setBrush(Qt::NoBrush);
 			const QPoint c = srcToWidget(cursorSrc_);
-			p.drawEllipse(c, srcToWidgetLen(brush), srcToWidgetLen(brush));
+			const int r = srcToWidgetLen(brush);
+			if (shape == BrushShape::Square)
+				p.drawRect(c.x() - r, c.y() - r, r * 2, r * 2);
+			else
+				p.drawEllipse(c, r, r);
 		}
 	}
 
@@ -541,11 +761,8 @@ protected:
 			setCursor(Qt::ClosedHandCursor);
 			return;
 		}
-		if (e->button() == Qt::LeftButton) {
-			painting_ = true;
-			lastSrc_ = widgetToSrc(e->pos());
-			stamp(lastSrc_);
-		}
+		if (e->button() == Qt::LeftButton)
+			handlePress(widgetToSrc(e->pos()));
 	}
 
 	void mouseMoveEvent(QMouseEvent *e) override
@@ -564,21 +781,18 @@ protected:
 			update();
 			return;
 		}
-		if (painting_ && (e->buttons() & Qt::LeftButton)) {
-			const QPointF now = cursorSrc_;
-			stroke(lastSrc_, now);
-			lastSrc_ = now;
-		}
+		if (e->buttons() & Qt::LeftButton)
+			handleMove(cursorSrc_);
 		update();
 	}
 
 	void mouseReleaseEvent(QMouseEvent *e) override
 	{
 		if (e->button() == Qt::LeftButton)
-			painting_ = false;
+			handleRelease(widgetToSrc(e->pos()));
 		if (e->button() == Qt::MiddleButton || e->button() == Qt::LeftButton)
 			panning_ = false;
-		setCursor(spaceDown_ ? Qt::OpenHandCursor : Qt::CrossCursor);
+		updateCursor();
 	}
 
 	void leaveEvent(QEvent *) override
@@ -596,6 +810,22 @@ protected:
 		}
 		if (e->key() == Qt::Key_0 && e->modifiers() & Qt::ControlModifier) {
 			resetView();
+			e->accept();
+			return;
+		}
+		if (e->key() == Qt::Key_Z && e->modifiers() & Qt::ControlModifier) {
+			undo();
+			e->accept();
+			return;
+		}
+		if (e->key() == Qt::Key_Escape) {
+			cancelLineDrag();
+			magicPath_.clear();
+			e->accept();
+			return;
+		}
+		if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
+			closePolyline();
 			e->accept();
 			return;
 		}
@@ -633,6 +863,8 @@ protected:
 			return;
 		}
 		brush = std::clamp(brush + (e->angleDelta().y() > 0 ? 2 : -2), 4, 96);
+		if (brushChanged)
+			brushChanged();
 		update();
 	}
 
@@ -685,6 +917,16 @@ private:
 		return std::max(1, src * d.width() / frame.width());
 	}
 
+	void updateCursor()
+	{
+		if (spaceDown_)
+			setCursor(panning_ ? Qt::ClosedHandCursor : Qt::OpenHandCursor);
+		else if (tool == EditorTool::Fill)
+			setCursor(fillCursor_);
+		else
+			setCursor(Qt::CrossCursor);
+	}
+
 	void stamp(const QPointF &src)
 	{
 		if (mask.isNull())
@@ -692,10 +934,21 @@ private:
 		QPainter p(&mask);
 		p.setRenderHint(QPainter::Antialiasing, true);
 		p.setPen(Qt::NoPen);
-		if (erase) {
+		if (erase)
 			p.setCompositionMode(QPainter::CompositionMode_Source);
+
+		const QRectF box(src.x() - brush, src.y() - brush, brush * 2.0, brush * 2.0);
+		if (erase) {
 			p.setBrush(Qt::black);
-			p.drawEllipse(src, brush, brush);
+			if (shape == BrushShape::Square)
+				p.drawRect(box);
+			else
+				p.drawEllipse(src, brush, brush);
+			return;
+		}
+		if (shape == BrushShape::Square) {
+			p.setBrush(Qt::white);
+			p.drawRect(box);
 		} else {
 			QRadialGradient g(src, brush);
 			g.setColorAt(0.0, Qt::white);
@@ -714,6 +967,248 @@ private:
 			stamp(line.pointAt(i / static_cast<double>(steps)));
 	}
 
+	void strokeOnMask(const QPointF &a, const QPointF &b)
+	{
+		if (mask.isNull())
+			return;
+		QPainter p(&mask);
+		p.setRenderHint(QPainter::Antialiasing, true);
+		if (erase)
+			p.setCompositionMode(QPainter::CompositionMode_Source);
+		QPen pen(erase ? Qt::black : Qt::white, 2.0);
+		pen.setCapStyle(Qt::RoundCap);
+		pen.setJoinStyle(Qt::RoundJoin);
+		p.setPen(pen);
+		p.drawLine(a, b);
+	}
+
+	void handlePress(const QPointF &src)
+	{
+		if (tool == EditorTool::Fill) {
+			fillAt(src);
+			return;
+		}
+		if (tool == EditorTool::Magic) {
+			magicPath_.clear();
+			magicPath_ << src;
+			magicDragging_ = true;
+			return;
+		}
+		if (tool == EditorTool::Line) {
+			if (linePts_.size() >= 3) {
+				const QPointF first = linePts_.front();
+				const double d = QLineF(src, first).length();
+				if (d <= std::max(8.0, brush * 0.8)) {
+					closePolyline();
+					return;
+				}
+			}
+			if (linePts_.empty())
+				linePts_ << src;
+			lineDragging_ = true;
+			lineStraight_ = false;
+			lineFreehand_.clear();
+			lineFreehand_ << linePts_.back() << src;
+			if (dwell_)
+				dwell_->start();
+			return;
+		}
+		painting_ = true;
+		lastSrc_ = src;
+		stamp(src);
+	}
+
+	void handleMove(const QPointF &src)
+	{
+		if (tool == EditorTool::Magic && magicDragging_) {
+			if (magicPath_.isEmpty() || QLineF(magicPath_.back(), src).length() >= 2.0)
+				magicPath_ << src;
+			return;
+		}
+		if (tool == EditorTool::Line && lineDragging_) {
+			if (lineStraight_) {
+				cursorSrc_ = src;
+			} else {
+				if (lineFreehand_.isEmpty() || QLineF(lineFreehand_.back(), src).length() >= 1.5)
+					lineFreehand_ << src;
+				if (dwell_)
+					dwell_->start();
+			}
+			return;
+		}
+		if (painting_) {
+			stroke(lastSrc_, src);
+			lastSrc_ = src;
+		}
+	}
+
+	void handleRelease(const QPointF &src)
+	{
+		if (tool == EditorTool::Magic && magicDragging_) {
+			magicDragging_ = false;
+			if (QLineF(magicPath_.back(), magicPath_.front()).length() > 3)
+				magicPath_ << magicPath_.front();
+			applyMagic();
+			magicPath_.clear();
+			return;
+		}
+		if (tool == EditorTool::Line && lineDragging_) {
+			if (dwell_)
+				dwell_->stop();
+			pushUndo();
+			const QPointF from = linePts_.back();
+			if (lineStraight_) {
+				strokeOnMask(from, src);
+				linePts_ << src;
+			} else {
+				for (int i = 1; i < lineFreehand_.size(); i++)
+					strokeOnMask(lineFreehand_[i - 1], lineFreehand_[i]);
+				if (!lineFreehand_.isEmpty())
+					linePts_ << lineFreehand_.back();
+			}
+			lineDragging_ = false;
+			lineStraight_ = false;
+			lineFreehand_.clear();
+			if (linePts_.size() >= 3) {
+				const double d = QLineF(linePts_.back(), linePts_.front()).length();
+				if (d <= std::max(8.0, brush * 0.8))
+					closePolyline();
+			}
+			return;
+		}
+		painting_ = false;
+	}
+
+	void applyMagic()
+	{
+		if (frame.isNull() || mask.isNull() || magicPath_.size() < 8)
+			return;
+		const int w = mask.width();
+		const int h = mask.height();
+
+		QPolygonF path = magicPath_;
+		if (QLineF(path.front(), path.back()).length() > 3)
+			path << path.front();
+		QPolygonF dense;
+		const double spacing = 3.0;
+		for (int i = 1; i < path.size(); i++) {
+			QLineF seg(path[i - 1], path[i]);
+			const int n = std::max(1, static_cast<int>(seg.length() / spacing));
+			for (int k = 0; k < n; k++)
+				dense << seg.pointAt(k / static_cast<double>(n));
+		}
+		if (dense.size() < 8)
+			return;
+
+		QPointF center;
+		for (const QPointF &pt : dense)
+			center += pt;
+		center /= static_cast<double>(dense.size());
+
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h);
+		QImage rgb = frame.convertToFormat(QImage::Format_ARGB32);
+		for (int y = 0; y < h; y++) {
+			const QRgb *row = reinterpret_cast<const QRgb *>(rgb.constScanLine(y));
+			for (int x = 0; x < w; x++) {
+				const QRgb p = row[x];
+				lum[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>((77 * qRed(p) + 150 * qGreen(p) + 29 * qBlue(p)) >> 8);
+			}
+		}
+		std::vector<uint16_t> mag(static_cast<size_t>(w) * h, 0);
+		for (int y = 1; y < h - 1; y++) {
+			for (int x = 1; x < w - 1; x++) {
+				const int i = y * w + x;
+				const int gx = -lum[i - w - 1] - 2 * lum[i - 1] - lum[i + w - 1] + lum[i - w + 1] +
+					       2 * lum[i + 1] + lum[i + w + 1];
+				const int gy = -lum[i - w - 1] - 2 * lum[i - w] - lum[i - w + 1] + lum[i + w - 1] +
+					       2 * lum[i + w] + lum[i + w + 1];
+				mag[i] = static_cast<uint16_t>(std::abs(gx) + std::abs(gy));
+			}
+		}
+
+		auto sample = [&](double x, double y) -> int {
+			const int ix = static_cast<int>(std::lround(x));
+			const int iy = static_cast<int>(std::lround(y));
+			if (ix <= 0 || iy <= 0 || ix >= w - 1 || iy >= h - 1)
+				return 0;
+			return mag[iy * w + ix];
+		};
+
+		const int search = 18;
+		std::vector<int> pull(static_cast<size_t>(dense.size()), 0);
+		for (int i = 0; i < dense.size(); i++) {
+			const QPointF prev = dense[(i + dense.size() - 1) % dense.size()];
+			const QPointF next = dense[(i + 1) % dense.size()];
+			QPointF tang(next.x() - prev.x(), next.y() - prev.y());
+			const double len = std::hypot(tang.x(), tang.y());
+			if (len < 1e-3)
+				continue;
+			QPointF nrm(-tang.y() / len, tang.x() / len);
+			const QPointF toC(center.x() - dense[i].x(), center.y() - dense[i].y());
+			if (nrm.x() * toC.x() + nrm.y() * toC.y() < 0) {
+				nrm.setX(-nrm.x());
+				nrm.setY(-nrm.y());
+			}
+
+			int rayMax = 1;
+			for (int t = 2; t <= search; t++)
+				rayMax = std::max(rayMax, sample(dense[i].x() + nrm.x() * t, dense[i].y() + nrm.y() * t));
+			const int thresh = std::max(28, (int)(0.50 * rayMax));
+			int useT = 0;
+			for (int t = 2; t <= search - 1; t++) {
+				const int m = sample(dense[i].x() + nrm.x() * t, dense[i].y() + nrm.y() * t);
+				if (m < thresh)
+					continue;
+				const int mo = sample(dense[i].x() + nrm.x() * (t - 1), dense[i].y() + nrm.y() * (t - 1));
+				const int mi = sample(dense[i].x() + nrm.x() * (t + 1), dense[i].y() + nrm.y() * (t + 1));
+				if (m >= mo && m >= mi) {
+					useT = t;
+					break;
+				}
+			}
+			pull[static_cast<size_t>(i)] = useT;
+		}
+		/* Median-filter pull distances so one inner icon cannot spike the outline. */
+		std::vector<int> smooth = pull;
+		for (int i = 0; i < dense.size(); i++) {
+			int vals[5];
+			for (int k = -2; k <= 2; k++)
+				vals[k + 2] = pull[static_cast<size_t>((i + k + dense.size()) % dense.size())];
+			std::sort(vals, vals + 5);
+			smooth[static_cast<size_t>(i)] = vals[2];
+		}
+		QPolygonF snapped;
+		snapped.reserve(dense.size());
+		for (int i = 0; i < dense.size(); i++) {
+			const QPointF prev = dense[(i + dense.size() - 1) % dense.size()];
+			const QPointF next = dense[(i + 1) % dense.size()];
+			QPointF tang(next.x() - prev.x(), next.y() - prev.y());
+			const double len = std::hypot(tang.x(), tang.y());
+			QPointF nrm(0, 0);
+			if (len >= 1e-3) {
+				nrm = QPointF(-tang.y() / len, tang.x() / len);
+				const QPointF toC(center.x() - dense[i].x(), center.y() - dense[i].y());
+				if (nrm.x() * toC.x() + nrm.y() * toC.y() < 0) {
+					nrm.setX(-nrm.x());
+					nrm.setY(-nrm.y());
+				}
+			}
+			const int t = smooth[static_cast<size_t>(i)];
+			snapped << QPointF(dense[i].x() + nrm.x() * t, dense[i].y() + nrm.y() * t);
+		}
+		if (snapped.size() < 8)
+			return;
+
+		pushUndo();
+		QPainter p(&mask);
+		p.setRenderHint(QPainter::Antialiasing, true);
+		p.setPen(Qt::NoPen);
+		p.setBrush(Qt::white);
+		p.drawPolygon(snapped);
+		update();
+	}
+
 	bool painting_ = false;
 	bool panning_ = false;
 	bool spaceDown_ = false;
@@ -723,6 +1218,17 @@ private:
 	QPoint lastPanWidget_;
 	QPointF lastSrc_;
 	QPointF cursorSrc_;
+	QImage undoMask_;
+	bool hasUndo_ = false;
+	QTimer *dwell_ = nullptr;
+	bool lineDragging_ = false;
+	bool lineStraight_ = false;
+	QPolygonF linePts_;
+	QPolygonF lineFreehand_;
+	bool magicDragging_ = false;
+	QPolygonF magicPath_;
+	QPolygonF closedPoly_;
+	QCursor fillCursor_ = make_bucket_cursor();
 };
 
 class CutoutDialog : public QDialog {
@@ -734,29 +1240,56 @@ public:
 
 		canvas_ = new MaskCanvas(this);
 
-		auto *highlight = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Highlight")), this);
-		auto *erase = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Erase")), this);
-		highlight->setCheckable(true);
-		erase->setCheckable(true);
-		highlight->setChecked(true);
+		auto *maskBrush = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.MaskBrush")), this);
+		auto *eraseBrush = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.EraseBrush")), this);
+		maskBrush->setCheckable(true);
+		eraseBrush->setCheckable(true);
+		maskBrush->setChecked(true);
+
+		auto *shape = new QComboBox(this);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.BrushCircle")), 0);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.BrushSquare")), 1);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Line")), 2);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Fill")), 3);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Magic")), 4);
 
 		auto *brushLabel = new QLabel(this);
 		auto *brush = new QSlider(Qt::Horizontal, this);
 		brush->setRange(4, 96);
 		brush->setValue(canvas_->brush);
 
-		auto *resetZoom = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.ResetZoom")), this);
+		auto *zoomLabel = new QLabel(this);
+		auto *zoom = new QSlider(Qt::Horizontal, this);
+		zoom->setRange(100, 1600);
+		zoom->setSingleStep(5);
+		zoom->setPageStep(25);
+		zoom->setValue(100);
+
 		auto *snap = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snap")), this);
+		auto *undo = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Undo")), this);
+		undo->setEnabled(false);
 		auto *refresh = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Refresh")), this);
 		auto *clear = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Clear")), this);
 		auto *ok = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Apply")), this);
 		auto *cancel = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Cancel")), this);
-		auto *zoomLabel = new QLabel(this);
-		auto *status = new QLabel(QString::fromUtf8(obs_module_text("HUDMask.Editor.Hint")), this);
-		status->setWordWrap(true);
-		canvas_->viewChanged = [this, zoomLabel]() {
-			zoomLabel->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Zoom"))
-						   .arg(static_cast<int>(std::lround(canvas_->zoom() * 100))));
+
+		pauseBtn_ = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Pause")), this);
+		playBtn_ = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Play")), this);
+		pauseBtn_->setCheckable(true);
+		playBtn_->setCheckable(true);
+		pauseBtn_->setChecked(true);
+
+		auto *hintPan = new QLabel(QString::fromUtf8(obs_module_text("HUDMask.Editor.HintPan")), this);
+		auto *hintZoom = new QLabel(QString::fromUtf8(obs_module_text("HUDMask.Editor.HintZoom")), this);
+		auto *hintBrush = new QLabel(QString::fromUtf8(obs_module_text("HUDMask.Editor.HintBrush")), this);
+		auto *hintTool = new QLabel(this);
+
+		canvas_->viewChanged = [this, zoomLabel, zoom]() {
+			const int pct = canvas_->zoomPercent();
+			zoomLabel->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.Zoom")).arg(pct));
+			zoom->blockSignals(true);
+			zoom->setValue(pct);
+			zoom->blockSignals(false);
 		};
 		canvas_->viewChanged();
 
@@ -765,39 +1298,104 @@ public:
 					    QString("  %1").arg(brush->value()));
 		};
 		updateBrushLabel();
+		canvas_->brushChanged = [this, brush, updateBrushLabel]() {
+			brush->blockSignals(true);
+			brush->setValue(canvas_->brush);
+			brush->blockSignals(false);
+			updateBrushLabel();
+		};
+		canvas_->undoChanged = [this, undo]() { undo->setEnabled(canvas_->canUndo()); };
 
-		connect(highlight, &QPushButton::clicked, this, [this, highlight, erase]() {
+		auto applyMode = [this, maskBrush, eraseBrush, shape, brush, brushLabel, hintTool]() {
+			maskBrush->setChecked(!canvas_->erase);
+			eraseBrush->setChecked(canvas_->erase);
+			const EditorTool t = canvas_->tool;
+			const char *hint = "HUDMask.Editor.HintBrush";
+			if (t == EditorTool::Line)
+				hint = "HUDMask.Editor.HintLine";
+			else if (t == EditorTool::Fill)
+				hint = "HUDMask.Editor.HintFill";
+			else if (t == EditorTool::Magic)
+				hint = "HUDMask.Editor.HintMagic";
+			hintTool->setText(QString::fromUtf8(obs_module_text(hint)));
+			const bool sizeOn = t == EditorTool::Paint;
+			brush->setEnabled(sizeOn);
+			brushLabel->setEnabled(sizeOn);
+		};
+		applyMode();
+
+		connect(maskBrush, &QPushButton::clicked, this, [this, applyMode]() {
 			canvas_->erase = false;
-			highlight->setChecked(true);
-			erase->setChecked(false);
+			applyMode();
 			canvas_->update();
 		});
-		connect(erase, &QPushButton::clicked, this, [this, highlight, erase]() {
+		connect(eraseBrush, &QPushButton::clicked, this, [this, applyMode]() {
 			canvas_->erase = true;
-			erase->setChecked(true);
-			highlight->setChecked(false);
+			applyMode();
 			canvas_->update();
+		});
+		connect(shape, &QComboBox::currentIndexChanged, this, [this, shape, applyMode](int) {
+			const int id = shape->currentData().toInt();
+			if (id == 0) {
+				canvas_->setTool(EditorTool::Paint);
+				canvas_->shape = BrushShape::Circle;
+			} else if (id == 1) {
+				canvas_->setTool(EditorTool::Paint);
+				canvas_->shape = BrushShape::Square;
+			} else if (id == 2) {
+				canvas_->setTool(EditorTool::Line);
+			} else if (id == 3) {
+				canvas_->setTool(EditorTool::Fill);
+			} else {
+				canvas_->setTool(EditorTool::Magic);
+			}
+			applyMode();
 		});
 		connect(brush, &QSlider::valueChanged, this, [this, updateBrushLabel](int v) {
 			canvas_->brush = v;
 			updateBrushLabel();
 			canvas_->update();
 		});
-		connect(resetZoom, &QPushButton::clicked, this, [this]() { canvas_->resetView(); });
-		connect(snap, &QPushButton::clicked, this, [this]() { canvas_->snapToEdges(); });
-		connect(refresh, &QPushButton::clicked, this, [this]() { startCapture(false); });
+		connect(zoom, &QSlider::valueChanged, this, [this](int v) { canvas_->setZoomPercent(v); });
+		connect(snap, &QPushButton::clicked, this, [this]() { canvas_->snapEdges(); });
+		connect(undo, &QPushButton::clicked, this, [this]() { canvas_->undo(); });
+		connect(refresh, &QPushButton::clicked, this, [this]() {
+			setLive(false);
+			startCapture(false, false);
+		});
 		connect(clear, &QPushButton::clicked, this, [this]() { canvas_->clearMask(); });
 		connect(ok, &QPushButton::clicked, this, [this]() { applyAndClose(); });
 		connect(cancel, &QPushButton::clicked, this, [this]() { reject(); });
+		connect(pauseBtn_, &QPushButton::clicked, this, [this]() { setLive(false); });
+		connect(playBtn_, &QPushButton::clicked, this, [this]() { setLive(true); });
+
+		auto *hints = new QVBoxLayout();
+		hints->setContentsMargins(0, 0, 0, 0);
+		hints->setSpacing(2);
+		hints->addWidget(hintPan);
+		hints->addWidget(hintZoom);
+		hints->addWidget(hintBrush);
+		hints->addWidget(hintTool);
+
+		auto *transport = new QHBoxLayout();
+		transport->addStretch();
+		transport->addWidget(pauseBtn_);
+		transport->addWidget(playBtn_);
+
+		auto *footer = new QHBoxLayout();
+		footer->addLayout(hints, 1);
+		footer->addLayout(transport);
 
 		auto *tools = new QHBoxLayout();
-		tools->addWidget(highlight);
-		tools->addWidget(erase);
+		tools->addWidget(maskBrush);
+		tools->addWidget(eraseBrush);
+		tools->addWidget(shape);
 		tools->addWidget(brushLabel);
 		tools->addWidget(brush, 1);
 		tools->addWidget(zoomLabel);
-		tools->addWidget(resetZoom);
+		tools->addWidget(zoom, 1);
 		tools->addWidget(snap);
+		tools->addWidget(undo);
 		tools->addWidget(refresh);
 		tools->addWidget(clear);
 		tools->addStretch();
@@ -806,10 +1404,10 @@ public:
 
 		auto *root = new QVBoxLayout(this);
 		root->addWidget(canvas_, 1);
-		root->addWidget(status);
+		root->addLayout(footer);
 		root->addLayout(tools);
 
-		startCapture(true);
+		startCapture(true, false);
 		canvas_->setFocus();
 	}
 
@@ -828,6 +1426,21 @@ protected:
 			e->accept();
 			return;
 		}
+		if (e->key() == Qt::Key_Z && e->modifiers() & Qt::ControlModifier) {
+			canvas_->undo();
+			e->accept();
+			return;
+		}
+		if (e->key() == Qt::Key_Escape) {
+			canvas_->cancelLineDrag();
+			e->accept();
+			return;
+		}
+		if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
+			canvas_->closePolyline();
+			e->accept();
+			return;
+		}
 		QDialog::keyPressEvent(e);
 	}
 
@@ -842,6 +1455,19 @@ protected:
 	}
 
 private:
+	void setLive(bool live)
+	{
+		live_ = live;
+		if (pauseBtn_)
+			pauseBtn_->setChecked(!live);
+		if (playBtn_)
+			playBtn_->setChecked(live);
+		if (live)
+			startCapture(false, true);
+		else
+			stopCapture();
+	}
+
 	void stopCapture()
 	{
 		if (!job_)
@@ -854,6 +1480,13 @@ private:
 			OBS_TASK_GRAPHICS,
 			[](void *p) {
 				auto *job = static_cast<CaptureJob *>(p);
+				if (job->heldShowing && job->weak) {
+					obs_source_t *source = obs_weak_source_get_source(job->weak);
+					if (source) {
+						obs_source_dec_showing(source);
+						obs_source_release(source);
+					}
+				}
 				if (job->stagesurf)
 					gs_stagesurface_destroy(job->stagesurf);
 				if (job->texrender)
@@ -865,7 +1498,7 @@ private:
 			j, false);
 	}
 
-	void startCapture(bool loadExisting)
+	void startCapture(bool loadExisting, bool live)
 	{
 		stopCapture();
 
@@ -878,14 +1511,15 @@ private:
 
 		job_ = new CaptureJob();
 		job_->weak = obs_source_get_weak_source(target);
-		job_->loadExisting = loadExisting;
+		job_->loadExisting = loadExisting && !live;
+		job_->live = live;
 		QPointer<CutoutDialog> self(this);
 		job_->onFrame = [self](QImage img, bool existing) {
 			if (self)
 				self->onFrame(std::move(img), existing);
 		};
-		job_->onFail = [self]() {
-			if (!self)
+		job_->onFail = [self, live]() {
+			if (!self || live)
 				return;
 			QMessageBox::warning(self, self->windowTitle(),
 					     QString::fromUtf8(obs_module_text("HUDMask.Editor.CaptureFailed")));
@@ -896,6 +1530,8 @@ private:
 
 	void onFrame(QImage img, bool loadExisting)
 	{
+		if (job_)
+			job_->uiPending.store(false);
 		if (img.isNull())
 			return;
 		const QSize old = canvas_->mask.size();
@@ -980,6 +1616,9 @@ private:
 	hud_mask *ctx_;
 	MaskCanvas *canvas_;
 	CaptureJob *job_ = nullptr;
+	QPushButton *pauseBtn_ = nullptr;
+	QPushButton *playBtn_ = nullptr;
+	bool live_ = false;
 };
 
 } // namespace

@@ -13,6 +13,7 @@ struct hud_mask {
 	bool rendering = false;
 
 	std::string target_name;
+	std::string canvas_uuid;
 	std::string mask_path;
 
 	int crop_left = 0;

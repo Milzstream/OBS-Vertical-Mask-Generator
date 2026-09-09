@@ -107,3 +107,154 @@ int mask_circle_radius_from_bounds(int bbox_w, int bbox_h)
 {
 	return std::max(6, std::min(bbox_w, bbox_h) / 2);
 }
+
+/* wall = pixels >= 20. closed = wall plus empty pixels that have painted
+ * neighbors on opposite sides (a 1px hole). Does not thicken a solid outline. */
+static bool mask_walls_and_gaps(const std::vector<uint8_t> &gray, int width, int height, std::vector<uint8_t> &wall,
+				std::vector<uint8_t> &closed)
+{
+	if (width <= 0 || height <= 0)
+		return false;
+	if (static_cast<int>(gray.size()) < width * height)
+		return false;
+
+	const int n = width * height;
+	wall.assign(static_cast<size_t>(n), 0);
+	for (int i = 0; i < n; i++) {
+		if (gray[static_cast<size_t>(i)] >= 20)
+			wall[static_cast<size_t>(i)] = 1;
+	}
+
+	closed = wall;
+	for (int yy = 1; yy < height - 1; yy++) {
+		for (int xx = 1; xx < width - 1; xx++) {
+			const int i = yy * width + xx;
+			if (wall[static_cast<size_t>(i)])
+				continue;
+			const bool h = wall[static_cast<size_t>(i - 1)] && wall[static_cast<size_t>(i + 1)];
+			const bool v = wall[static_cast<size_t>(i - width)] && wall[static_cast<size_t>(i + width)];
+			const bool d1 = wall[static_cast<size_t>(i - width - 1)] &&
+					wall[static_cast<size_t>(i + width + 1)];
+			const bool d2 = wall[static_cast<size_t>(i - width + 1)] &&
+					wall[static_cast<size_t>(i + width - 1)];
+			if (h || v || d1 || d2)
+				closed[static_cast<size_t>(i)] = 1;
+		}
+	}
+	return true;
+}
+
+static bool mask_touches_seen(const std::vector<uint8_t> &seen, int width, int height, int x, int y)
+{
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			if (dx == 0 && dy == 0)
+				continue;
+			const int nx = x + dx;
+			const int ny = y + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+				continue;
+			if (seen[static_cast<size_t>(ny) * width + nx])
+				return true;
+		}
+	}
+	return false;
+}
+
+bool mask_flood_fill(std::vector<uint8_t> &gray, int width, int height, int x, int y, bool absorb_outline)
+{
+	if (x < 0 || y < 0 || x >= width || y >= height)
+		return false;
+
+	std::vector<uint8_t> wall;
+	std::vector<uint8_t> closed;
+	if (!mask_walls_and_gaps(gray, width, height, wall, closed))
+		return false;
+
+	const int n = width * height;
+	const int seed = y * width + x;
+	if (closed[static_cast<size_t>(seed)])
+		return false;
+
+	std::vector<uint8_t> seen(static_cast<size_t>(n), 0);
+	std::vector<int> q;
+	q.push_back(seed);
+	seen[static_cast<size_t>(seed)] = 1;
+	for (size_t qi = 0; qi < q.size(); qi++) {
+		const int i = q[qi];
+		const int px = i % width;
+		const int py = i / width;
+		gray[static_cast<size_t>(i)] = 255;
+		const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < width ? i + 1 : -1, py > 0 ? i - width : -1,
+				   py + 1 < height ? i + width : -1};
+		for (int nbi : nb) {
+			if (nbi < 0 || seen[static_cast<size_t>(nbi)])
+				continue;
+			if (closed[static_cast<size_t>(nbi)])
+				continue;
+			seen[static_cast<size_t>(nbi)] = 1;
+			q.push_back(nbi);
+		}
+	}
+
+	if (!absorb_outline)
+		return true;
+
+	for (int iter = 0; iter < 8; iter++) {
+		std::vector<int> extra;
+		for (int yy = 0; yy < height; yy++) {
+			for (int xx = 0; xx < width; xx++) {
+				const int i = yy * width + xx;
+				if (seen[static_cast<size_t>(i)] || !closed[static_cast<size_t>(i)])
+					continue;
+				if (mask_touches_seen(seen, width, height, xx, yy))
+					extra.push_back(i);
+			}
+		}
+		if (extra.empty())
+			break;
+		for (int i : extra) {
+			seen[static_cast<size_t>(i)] = 1;
+			gray[static_cast<size_t>(i)] = 255;
+		}
+	}
+	return true;
+}
+
+bool mask_flood_erase(std::vector<uint8_t> &gray, int width, int height, int x, int y)
+{
+	if (x < 0 || y < 0 || x >= width || y >= height)
+		return false;
+
+	std::vector<uint8_t> wall;
+	std::vector<uint8_t> closed;
+	if (!mask_walls_and_gaps(gray, width, height, wall, closed))
+		return false;
+
+	const int n = width * height;
+	const int seed = y * width + x;
+	if (!closed[static_cast<size_t>(seed)])
+		return false;
+
+	std::vector<uint8_t> seen(static_cast<size_t>(n), 0);
+	std::vector<int> q;
+	q.push_back(seed);
+	seen[static_cast<size_t>(seed)] = 1;
+	for (size_t qi = 0; qi < q.size(); qi++) {
+		const int i = q[qi];
+		const int px = i % width;
+		const int py = i / width;
+		gray[static_cast<size_t>(i)] = 0;
+		const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < width ? i + 1 : -1, py > 0 ? i - width : -1,
+				   py + 1 < height ? i + width : -1};
+		for (int nbi : nb) {
+			if (nbi < 0 || seen[static_cast<size_t>(nbi)])
+				continue;
+			if (!closed[static_cast<size_t>(nbi)])
+				continue;
+			seen[static_cast<size_t>(nbi)] = 1;
+			q.push_back(nbi);
+		}
+	}
+	return true;
+}
