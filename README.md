@@ -18,18 +18,6 @@ Requires OBS Studio 32+ on Windows 10/11 x64. Close OBS first.
 
 The installer writes only under ProgramData. On later launches, HUD Mask checks GitHub for a newer release and can open the download. Close OBS before running a new installer.
 
-### If you copied files into Program Files by hand
-
-Early local copies (and an old helper script) also dropped a DLL next to OBS. That copy loads **in addition to** the installer and you will see HUD Mask twice, or `Source 'vertical_hud_mask' already exists!`. Close OBS, then from an **elevated** PowerShell:
-
-```powershell
-Remove-Item -Force "C:\Program Files\obs-studio\obs-plugins\64bit\vertical-hud-mask.dll" -ErrorAction SilentlyContinue
-Remove-Item -Force "C:\Program Files\obs-studio\obs-plugins\64bit\vertical-hud-mask.pdb" -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force "C:\Program Files\obs-studio\data\obs-plugins\vertical-hud-mask" -ErrorAction SilentlyContinue
-```
-
-Then run the installer (it also tries to remove those leftovers).
-
 ## Use
 
 1. Add a **HUD Mask** source.
