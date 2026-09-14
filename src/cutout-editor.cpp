@@ -338,8 +338,20 @@ public:
 		const QSize prev = frame.size();
 		frame = img.convertToFormat(QImage::Format_ARGB32);
 		if (mask.size() != frame.size()) {
-			mask = QImage(frame.size(), QImage::Format_Grayscale8);
-			mask.fill(0);
+			if (mask.isNull() || !hasPaint()) {
+				mask = QImage(frame.size(), QImage::Format_Grayscale8);
+				mask.fill(0);
+			} else {
+				pushUndo();
+				mask = mask.scaled(frame.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+					 .convertToFormat(QImage::Format_Grayscale8);
+				if (!sizeWarned_) {
+					sizeWarned_ = true;
+					QMessageBox::information(
+						window(), QString::fromUtf8(obs_module_text("HUDMask.Editor.Title")),
+						QString::fromUtf8(obs_module_text("HUDMask.Editor.FrameResized")));
+				}
+			}
 		}
 		if (first || prev != frame.size()) {
 			zoom_ = 1.0;
@@ -390,6 +402,21 @@ public:
 		hasUndo_ = true;
 		if (undoChanged)
 			undoChanged();
+	}
+
+	bool hasPaint() const
+	{
+		if (mask.isNull())
+			return false;
+		const int h = mask.height();
+		const int w = mask.width();
+		for (int y = 0; y < h; y++) {
+			const uint8_t *row = mask.constScanLine(y);
+			for (int x = 0; x < w; x++)
+				if (row[x] != 0)
+					return true;
+		}
+		return false;
 	}
 
 	std::vector<uint8_t> frameLuma() const
@@ -919,6 +946,7 @@ private:
 	bool panning_ = false;
 	bool spaceDown_ = false;
 	bool cursorOn_ = false;
+	bool sizeWarned_ = false;
 	double zoom_ = 1.0;
 	QPointF viewCenter_;
 	QPoint lastPanWidget_;
