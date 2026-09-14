@@ -38,6 +38,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QSlider>
+#include <QStandardItemModel>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -1043,6 +1044,13 @@ public:
 		auto applyMode = [this, maskBrush, eraseBrush, shape, brush, brushLabel, hintTool]() {
 			maskBrush->setChecked(!canvas_->erase);
 			eraseBrush->setChecked(canvas_->erase);
+			auto *model = qobject_cast<QStandardItemModel *>(shape->model());
+			const bool erasing = canvas_->erase;
+			for (int i = 2; i < shape->count(); i++)
+				if (model)
+					model->item(i)->setEnabled(!erasing);
+			if (erasing && shape->currentIndex() >= 2)
+				shape->setCurrentIndex(0);
 			const EditorTool t = canvas_->tool;
 			const char *hint = "HUDMask.Editor.HintBrush";
 			if (t == EditorTool::Line)
@@ -1293,6 +1301,8 @@ private:
 			       static_cast<size_t>(m.width()));
 		const MaskCrop crop = mask_crop_from_opaque(gray, m.width(), m.height(), 20, 32);
 		if (crop.empty) {
+			if (!ctx_->mask_path.empty())
+				os_unlink(ctx_->mask_path.c_str());
 			hud_mask_set_cutout(ctx_, "", 0, 0, 0, 0);
 			accept();
 			return;

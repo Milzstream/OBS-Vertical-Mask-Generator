@@ -474,6 +474,10 @@ void fill_same_masks(obs_properties_t *props, obs_source_t *self, obs_data_t *se
 	obs_property_t *prop = obs_properties_get(props, k_same);
 	if (!prop || !settings)
 		return;
+	/* Display-only information: never persist it into the scene collection.
+	 * A user value from an older build may still be saved, so unset it and
+	 * rely on the default fallback for the value the properties UI shows. */
+	obs_data_unset_user_value(settings, k_same);
 	const char *target = obs_data_get_string(settings, k_source);
 	std::vector<std::string> names;
 	if (target && target[0]) {
@@ -482,7 +486,7 @@ void fill_same_masks(obs_properties_t *props, obs_source_t *self, obs_data_t *se
 	}
 	std::sort(names.begin(), names.end());
 	if (names.empty()) {
-		obs_data_unset_user_value(settings, k_same);
+		obs_data_set_default_string(settings, k_same, "");
 		obs_property_set_visible(prop, false);
 		return;
 	}
@@ -494,7 +498,7 @@ void fill_same_masks(obs_properties_t *props, obs_source_t *self, obs_data_t *se
 	}
 	if (names.size() > static_cast<size_t>(k_same_cap))
 		text += "\n...";
-	obs_data_set_string(settings, k_same, text.c_str());
+	obs_data_set_default_string(settings, k_same, text.c_str());
 	obs_property_set_visible(prop, true);
 }
 
