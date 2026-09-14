@@ -529,9 +529,35 @@ bool source_modified(void *priv, obs_properties_t *props, obs_property_t *, obs_
 	return true;
 }
 
-bool draw_mask_clicked(obs_properties_t *, obs_property_t *, void *priv)
+void set_mask_controls_enabled(obs_properties_t *props, bool has_mask, bool auto_hide_on)
 {
-	hud_mask_open_editor(static_cast<hud_mask *>(priv));
+	obs_property_t *expand = obs_properties_get(props, k_expand);
+	obs_property_t *feather = obs_properties_get(props, k_feather);
+	obs_property_t *hide = obs_properties_get(props, k_auto_hide);
+	obs_property_t *fade = obs_properties_get(props, k_fade);
+	obs_property_t *match = obs_properties_get(props, k_match);
+	if (expand)
+		obs_property_set_enabled(expand, has_mask);
+	if (feather)
+		obs_property_set_enabled(feather, has_mask);
+	if (hide)
+		obs_property_set_enabled(hide, has_mask);
+	const bool enable_fade_match = has_mask && auto_hide_on;
+	if (fade)
+		obs_property_set_enabled(fade, enable_fade_match);
+	if (match)
+		obs_property_set_enabled(match, enable_fade_match);
+}
+
+bool draw_mask_clicked(obs_properties_t *props, obs_property_t *, void *priv)
+{
+	auto *ctx = static_cast<hud_mask *>(priv);
+	hud_mask_open_editor(ctx);
+	if (props) {
+		const bool has_mask = ctx && !ctx->mask_path.empty();
+		const bool on = ctx && ctx->auto_hide;
+		set_mask_controls_enabled(props, has_mask, on);
+	}
 	return true;
 }
 
@@ -540,15 +566,7 @@ bool auto_hide_modified(void *, obs_properties_t *props, obs_property_t *, obs_d
 	const bool has_mask = settings && obs_data_get_string(settings, k_mask_path) &&
 			      obs_data_get_string(settings, k_mask_path)[0];
 	const bool on = settings && obs_data_get_bool(settings, k_auto_hide);
-	obs_property_t *hide = obs_properties_get(props, k_auto_hide);
-	obs_property_t *fade = obs_properties_get(props, k_fade);
-	obs_property_t *match = obs_properties_get(props, k_match);
-	if (hide)
-		obs_property_set_enabled(hide, has_mask);
-	if (fade)
-		obs_property_set_enabled(fade, has_mask && on);
-	if (match)
-		obs_property_set_enabled(match, has_mask && on);
+	set_mask_controls_enabled(props, has_mask, on);
 	return true;
 }
 
@@ -614,7 +632,9 @@ obs_properties_t *hud_mask_properties(void *data)
 	obs_property_set_enabled(expand, has_mask);
 	obs_property_set_enabled(feather, has_mask);
 
-	obs_property_t *hide = obs_properties_add_bool(props, k_auto_hide, obs_module_text("HUDMask.AutoHide"));
+	const std::string hide_label = std::string(obs_module_text("HUDMask.AutoHide")) +
+				       obs_module_text("HUDMask.AutoHide.Experimental");
+	obs_property_t *hide = obs_properties_add_bool(props, k_auto_hide, hide_label.c_str());
 	obs_property_set_long_description(hide, obs_module_text("HUDMask.AutoHide.Help"));
 	obs_property_set_modified_callback2(hide, auto_hide_modified, ctx);
 	obs_property_t *fade = obs_properties_add_int(props, k_fade, obs_module_text("HUDMask.AutoHide.Fade"), 0, 2000, 50);
@@ -624,9 +644,7 @@ obs_properties_t *hud_mask_properties(void *data)
 							     100, 1);
 	obs_property_set_long_description(match, obs_module_text("HUDMask.AutoHide.Match.Help"));
 	const bool hide_on = ctx && ctx->auto_hide;
-	obs_property_set_enabled(hide, has_mask);
-	obs_property_set_enabled(fade, has_mask && hide_on);
-	obs_property_set_enabled(match, has_mask && hide_on);
+	set_mask_controls_enabled(props, has_mask, hide_on);
 
 	return props;
 }
