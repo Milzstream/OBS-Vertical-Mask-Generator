@@ -34,7 +34,7 @@ The installer writes only under ProgramData. On later launches, HUD Mask checks 
 
 **Expand** and **Feather** on the properties pane are available after a mask exists.
 
-**Auto-hide** (off by default) makes the cut-out transparent when that HUD outline is gone, so loading screens and menus do not show through the hole. It does not click the OBS eyeball; a hidden scene item is skipped. Draw the mask while the HUD is visible — that still is the outline reference. **Fade** (0 ms is instant) and **Match** (how picky the outline compare is) are next to the checkbox. If it hides while the HUD is still on screen, open Draw mask, show the HUD, Refresh, then Apply.
+**Auto-hide** (off by default) makes the cut-out transparent when that HUD outline is gone, so loading screens and menus do not show through the hole. **Experimental:** it compares edges in the live frame, not the recorded outline placement, so unrelated scenery (cutscenes, menus) can still flicker it on and off. Draw the mask while the HUD is visible — that still is the outline reference. It does not click the OBS eyeball; a hidden scene item is skipped. **Fade** (0 ms is instant) and **Match** (how picky the outline compare is) are next to the checkbox. If it hides while the HUD is still on screen, open Draw mask, show the HUD, Refresh, then Apply.
 
 ## Build from source
 
