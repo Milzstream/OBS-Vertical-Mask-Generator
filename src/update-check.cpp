@@ -179,6 +179,15 @@ bool fetch_latest(ReleaseInfo &info)
 	mask_json_string_field(body, "html_url", info.page_url);
 	mask_json_bool_field(body, "prerelease", info.prerelease);
 	mask_find_windows_asset(body, info.download_url);
+	if (!mask_normalize_https_url(info.page_url))
+		info.page_url.clear();
+	if (!mask_normalize_https_url(info.download_url))
+		info.download_url.clear();
+	if (info.page_url.empty() && !info.tag.empty()) {
+		info.page_url = std::string("https://github.com/") + HUD_MASK_GH_REPO + "/releases/tag/" + info.tag;
+		if (!mask_normalize_https_url(info.page_url))
+			info.page_url.clear();
+	}
 	return true;
 }
 
@@ -214,9 +223,16 @@ void show_update_dialog(const ReleaseInfo info)
 	box.exec();
 
 	if (box.clickedButton() == download) {
-		const std::string &url = !info.download_url.empty() ? info.download_url : info.page_url;
-		if (!url.empty())
-			QDesktopServices::openUrl(QUrl(QString::fromStdString(url)));
+		std::string url = !info.download_url.empty() ? info.download_url : info.page_url;
+		if (mask_normalize_https_url(url)) {
+			const QUrl qurl = QUrl::fromEncoded(QByteArray(url.data(), static_cast<int>(url.size())));
+			if (qurl.isValid() && qurl.scheme() == "https")
+				QDesktopServices::openUrl(qurl);
+			else
+				obs_log(LOG_WARNING, "update check: invalid HTTPS url");
+		} else {
+			obs_log(LOG_WARNING, "update check: refused non-HTTPS download url");
+		}
 	} else if (box.clickedButton() == skip) {
 		obs_data_t *state = load_state();
 		obs_data_set_string(state, "skip_version", info.tag.c_str());

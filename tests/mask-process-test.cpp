@@ -295,6 +295,25 @@ int main()
 		mask_find_windows_asset(json, asset);
 		CHECK(asset.size() >= 4 && asset.compare(asset.size() - 4, 4, ".exe") == 0);
 		CHECK(asset.find("windows") != std::string::npos);
+		CHECK(mask_normalize_https_url(page) && page.compare(0, 8, "https://") == 0);
+		CHECK(mask_normalize_https_url(asset) && asset.compare(0, 8, "https://") == 0);
+	}
+
+	{
+		std::string u = "http://github.com/example/repo/releases/tag/0.1.1";
+		CHECK(mask_normalize_https_url(u) && u == "https://github.com/example/repo/releases/tag/0.1.1");
+		u = "github.com/example/repo/releases";
+		CHECK(mask_normalize_https_url(u) && u == "https://github.com/example/repo/releases");
+		u = "//github.com/example/repo";
+		CHECK(mask_normalize_https_url(u) && u == "https://github.com/example/repo");
+		u = "https:\\/\\/github.com\\/example\\/repo";
+		CHECK(mask_normalize_https_url(u) && u == "https://github.com/example/repo");
+		u = "https://github.com/example/repo/releases/download/0.1.1/plugin-windows-x64.exe";
+		CHECK(mask_normalize_https_url(u));
+		u = "http://evil.example/github.com";
+		CHECK(!mask_normalize_https_url(u) && u.empty());
+		u = "javascript:alert(1)";
+		CHECK(!mask_normalize_https_url(u) && u.empty());
 	}
 
 	/* Crop insets come from the opaque bbox plus pad. */
