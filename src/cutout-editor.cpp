@@ -522,8 +522,12 @@ protected:
 	{
 		QPainter p(this);
 		p.fillRect(rect(), QColor(20, 20, 20));
-		if (frame.isNull())
+		if (frame.isNull()) {
+			p.setPen(QColor(180, 180, 180));
+			p.drawText(rect(), Qt::AlignCenter,
+				   QString::fromUtf8(obs_module_text("HUDMask.Editor.WaitingFrame")));
 			return;
+		}
 
 		const QRect dest = fitted();
 		p.drawImage(dest, frame);
@@ -824,6 +828,8 @@ private:
 
 	void handlePress(const QPointF &src)
 	{
+		if (frame.isNull() || mask.isNull())
+			return;
 		if (tool == EditorTool::Fill) {
 			fillAt(src);
 			return;
@@ -853,6 +859,7 @@ private:
 				dwell_->start();
 			return;
 		}
+		pushUndo();
 		painting_ = true;
 		lastSrc_ = src;
 		stamp(src);
@@ -860,6 +867,8 @@ private:
 
 	void handleMove(const QPointF &src)
 	{
+		if (frame.isNull() || mask.isNull())
+			return;
 		if (tool == EditorTool::Magic && magicDragging_) {
 			if (magicPath_.isEmpty() || QLineF(magicPath_.back(), src).length() >= 2.0)
 				magicPath_ << src;
