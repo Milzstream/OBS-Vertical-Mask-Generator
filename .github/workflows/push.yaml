@@ -77,7 +77,7 @@ jobs:
           {
             echo "HUD Mask ${{ steps.check.outputs.version }} for OBS Studio on Windows."
             echo
-            echo "Add **HUD Mask**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is not in this release."
+            echo "Add **HUD Mask**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is optional and experimental."
             echo
             echo "Close OBS before installing. If you previously copied files into \`C:\\Program Files\\obs-studio\\\`, remove those first so OBS does not load the plugin twice (see the README)."
             echo
