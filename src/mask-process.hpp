@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 /* Pure mask helpers — no OBS/Qt. */
@@ -73,9 +74,20 @@ void mask_resize_luma(const std::vector<uint8_t> &src, int src_w, int src_h, std
 void mask_resize_mask(const std::vector<uint8_t> &src, int src_w, int src_h, std::vector<uint8_t> &dst, int dst_w,
 		      int dst_h);
 
+/* Binarize + expand + feather, same order as the visible mask texture. */
+void mask_presence_prepare_mask(std::vector<uint8_t> &gray, int width, int height, int expand, int feather);
+
 /* Pearson correlation of edge strength on band pixels (shape, not color). */
 bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
 			 const std::vector<uint8_t> &band, int width, int height, float *score);
+
+/* Best Pearson over a small translation search and a few smaller scales
+ * (HUD drift + empty slots). max_shift is clamped to 0–8. */
+bool mask_presence_match(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
+			 const std::vector<uint8_t> &band, int width, int height, int max_shift, float *score);
+
+/* Next name after last in a sorted unique list. Empty last or unknown last wraps to front. */
+std::string mask_presence_next_target(const std::vector<std::string> &sorted_unique, const std::string &last);
 
 /* 1px outline of the painted blob (mask >= 20). */
 void mask_blob_outline(const std::vector<uint8_t> &mask, int width, int height, std::vector<uint8_t> &outline);

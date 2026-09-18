@@ -595,14 +595,20 @@ int main()
 		CHECK(!mask_presence_outline_score(mask, hud, nullptr, 4, 4, &score));
 	}
 
+	CHECK(mask_presence_next_target({}, "").empty());
+	CHECK(mask_presence_next_target({"cam"}, "") == "cam");
+	CHECK(mask_presence_next_target({"cam"}, "cam") == "cam");
+	CHECK(mask_presence_next_target({"a", "b"}, "") == "a");
+	CHECK(mask_presence_next_target({"a", "b"}, "a") == "b");
+	CHECK(mask_presence_next_target({"a", "b"}, "b") == "a");
+	CHECK(mask_presence_next_target({"a", "b"}, "z") == "a");
+
 	/* Expand/feather change the outline vs the raw paint (issue #27). */
 	{
 		const int w = 48, h = 48;
 		auto raw = filled_square(w, h, 16, 16, 31, 31);
 		auto processed = raw;
-		mask_binarize(processed);
-		mask_expand(processed, w, h, 4);
-		mask_feather(processed, w, h, 2);
+		mask_presence_prepare_mask(processed, w, h, 4, 2);
 		CHECK(count_opaque(processed) > count_opaque(raw));
 
 		std::vector<uint8_t> raw_o, proc_o;
@@ -617,8 +623,7 @@ int main()
 		CHECK(proc_score > raw_score);
 	}
 
-	/* Unrelated box-like edges near the outline still score high today (issue #22).
-	 * The unused Pearson ref score does not. */
+	/* Outline energy still treats a nearby box as a hit; still-match does not (#22). */
 	{
 		const int w = 48, h = 48;
 		auto mask = filled_square(w, h, 8, 8, 39, 39);
@@ -630,7 +635,7 @@ int main()
 					cutscene[static_cast<size_t>(y) * w + x] =
 						static_cast<uint8_t>(30 + ((x * 13 + y * 7) & 80));
 
-		float outline_hud = 0, outline_cut = 0, ref_cut = 0;
+		float outline_hud = 0, outline_cut = 0, match_cut = 0, match_hud = 0;
 		CHECK(mask_presence_outline_score(mask, hud, nullptr, w, h, &outline_hud));
 		CHECK(mask_presence_outline_score(mask, cutscene, nullptr, w, h, &outline_cut));
 		CHECK(outline_hud > mask_presence_threshold(50));
@@ -638,8 +643,44 @@ int main()
 
 		std::vector<uint8_t> band;
 		mask_presence_band(mask, &hud, w, h, 2, band);
-		CHECK(mask_presence_score(hud, cutscene, band, w, h, &ref_cut));
-		CHECK(ref_cut < outline_cut);
+		CHECK(mask_presence_match(hud, hud, band, w, h, 3, &match_hud));
+		CHECK(match_hud > mask_presence_threshold(50));
+		CHECK(mask_presence_match(hud, cutscene, band, w, h, 3, &match_cut));
+		CHECK(match_cut < mask_presence_threshold(50));
+		CHECK(match_cut < outline_cut);
+	}
+
+	/* Still-match: recolor, empty slot, drift, and gone. */
+	{
+		const int w = 48, h = 48;
+		auto mask = filled_square(w, h, 8, 8, 39, 39);
+		auto hud = box_panel(w, h, 220, 90, 8, 8, 39, 39);
+		std::vector<uint8_t> band;
+		mask_presence_band(mask, &hud, w, h, 2, band);
+		float score = 0;
+
+		auto red = box_panel(w, h, 40, 200, 8, 8, 39, 39);
+		CHECK(mask_presence_match(hud, red, band, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		auto empty = box_panel(w, h, 160, 50, 12, 12, 35, 35);
+		CHECK(mask_presence_match(hud, empty, band, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		std::vector<uint8_t> shifted(static_cast<size_t>(w) * h, 40);
+		for (int y = 0; y < h; y++)
+			for (int x = 2; x < w; x++)
+				shifted[static_cast<size_t>(y) * w + x] = hud[static_cast<size_t>(y) * w + (x - 2)];
+		CHECK(mask_presence_match(hud, shifted, band, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		std::vector<uint8_t> gone(static_cast<size_t>(w) * h);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				gone[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(60 + (x + y) * 80 / (w + h));
+		CHECK(mask_presence_match(hud, gone, band, w, h, 3, &score));
+		CHECK(score < mask_presence_threshold(50));
 	}
 
 	if (g_fails) {

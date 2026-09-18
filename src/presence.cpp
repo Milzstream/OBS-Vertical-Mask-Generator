@@ -36,6 +36,7 @@ std::mutex g_mu;
 std::vector<hud_mask *> g_list;
 bool g_started = false;
 float g_wait = 0.0f;
+std::string g_last_target;
 
 struct Job {
 	obs_weak_source_t *weak = nullptr;
@@ -135,25 +136,27 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 	if (ctx->mask_w < 1 || ctx->mask_h < 1 || ctx->mask_gray.empty())
 		return;
 
+	std::vector<uint8_t> processed = ctx->mask_gray;
+	mask_presence_prepare_mask(processed, ctx->mask_w, ctx->mask_h, ctx->expand, ctx->feather);
 	std::vector<uint8_t> mask_s;
-	mask_resize_mask(ctx->mask_gray, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
+	mask_resize_mask(processed, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
 
-	const std::vector<uint8_t> *prev = nullptr;
-	if (ctx->presence_prev_w == rw && ctx->presence_prev_h == rh &&
-	    static_cast<int>(ctx->presence_prev.size()) == rw * rh)
-		prev = &ctx->presence_prev;
-
-	float score = 0;
-	if (!mask_presence_outline_score(mask_s, roi, prev, rw, rh, &score)) {
-		ctx->presence_prev = std::move(roi);
-		ctx->presence_prev_w = rw;
-		ctx->presence_prev_h = rh;
+	if (!ctx->ref_valid || ctx->ref_luma.empty() || ctx->ref_w < 1 || ctx->ref_h < 1) {
+		if (ctx->auto_hide)
+			hud_mask_presence_save_ref(ctx, roi.data(), mask_s.data(), rw, rh);
 		return;
 	}
+
+	std::vector<uint8_t> ref_s;
+	mask_resize_luma(ctx->ref_luma, ctx->ref_w, ctx->ref_h, ref_s, rw, rh);
+	const int inset = std::max(1, std::min(rw, rh) / 12);
+	std::vector<uint8_t> band;
+	mask_presence_band(mask_s, &ref_s, rw, rh, inset, band);
+
+	float score = 0;
+	if (!mask_presence_match(ref_s, roi, band, rw, rh, 3, &score))
+		return;
 	apply_score(ctx, score);
-	ctx->presence_prev = std::move(roi);
-	ctx->presence_prev_w = rw;
-	ctx->presence_prev_h = rh;
 }
 
 void finish_job_on_graphics()
@@ -216,7 +219,15 @@ bool start_job()
 	if (groups.empty())
 		return false;
 
-	auto it = groups.begin();
+	std::vector<std::string> names;
+	names.reserve(groups.size());
+	for (const auto &g : groups)
+		names.push_back(g.first);
+	const std::string pick = mask_presence_next_target(names, g_last_target);
+	g_last_target = pick;
+	auto it = groups.find(pick);
+	if (it == groups.end())
+		it = groups.begin();
 	hud_mask *lead = it->second.front();
 	obs_source_t *target = hud_mask_get_target(lead);
 	if (!target)

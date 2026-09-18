@@ -743,6 +743,83 @@ void mask_resize_mask(const std::vector<uint8_t> &src, int src_w, int src_h, std
 	mask_resize_luma(src, src_w, src_h, dst, dst_w, dst_h);
 }
 
+void mask_presence_prepare_mask(std::vector<uint8_t> &gray, int width, int height, int expand, int feather)
+{
+	if (expand == 0 && feather <= 0)
+		return;
+	mask_binarize(gray);
+	if (expand != 0)
+		mask_expand(gray, width, height, expand);
+	if (feather > 0)
+		mask_feather(gray, width, height, feather);
+}
+
+static bool presence_pearson(const std::vector<uint16_t> &mag_r, const std::vector<uint16_t> &mag_c,
+			     const std::vector<uint8_t> &band, int width, int height, int dx, int dy, float *score)
+{
+	if (!score)
+		return false;
+	*score = 0;
+	const int n = width * height;
+	if (width < 3 || height < 3)
+		return false;
+	if (static_cast<int>(mag_r.size()) < n || static_cast<int>(mag_c.size()) < n ||
+	    static_cast<int>(band.size()) < n)
+		return false;
+
+	double sum_r = 0, sum_c = 0;
+	int count = 0;
+	for (int y = 0; y < height; y++) {
+		const int cy = y + dy;
+		if (cy < 0 || cy >= height)
+			continue;
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			const int cx = x + dx;
+			if (cx < 0 || cx >= width)
+				continue;
+			sum_r += mag_r[static_cast<size_t>(y) * width + x];
+			sum_c += mag_c[static_cast<size_t>(cy) * width + cx];
+			count++;
+		}
+	}
+	if (count < 16)
+		return false;
+
+	const double mean_r = sum_r / count;
+	const double mean_c = sum_c / count;
+	double num = 0, den_r = 0, den_c = 0;
+	for (int y = 0; y < height; y++) {
+		const int cy = y + dy;
+		if (cy < 0 || cy >= height)
+			continue;
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			const int cx = x + dx;
+			if (cx < 0 || cx >= width)
+				continue;
+			const double dr = mag_r[static_cast<size_t>(y) * width + x] - mean_r;
+			const double dc = mag_c[static_cast<size_t>(cy) * width + cx] - mean_c;
+			num += dr * dc;
+			den_r += dr * dr;
+			den_c += dc * dc;
+		}
+	}
+	if (den_r < 1e-6 && den_c < 1e-6) {
+		*score = 1.0f;
+		return true;
+	}
+	if (den_r < 1e-6 || den_c < 1e-6) {
+		*score = 0.0f;
+		return true;
+	}
+	const double r = num / std::sqrt(den_r * den_c);
+	*score = r < 0 ? 0.0f : static_cast<float>(r > 1 ? 1 : r);
+	return true;
+}
+
 bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
 			 const std::vector<uint8_t> &band, int width, int height, float *score)
 {
@@ -760,42 +837,21 @@ bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector
 	std::vector<uint16_t> mag_c;
 	mask_sobel(ref_luma, width, height, mag_r);
 	mask_sobel(cur_luma, width, height, mag_c);
+	return presence_pearson(mag_r, mag_c, band, width, height, 0, 0, score);
+}
 
-	double sum_r = 0, sum_c = 0;
-	int count = 0;
-	for (int i = 0; i < n; i++) {
-		if (band[static_cast<size_t>(i)] < 128)
+std::string mask_presence_next_target(const std::vector<std::string> &sorted_unique, const std::string &last)
+{
+	if (sorted_unique.empty())
+		return {};
+	if (last.empty())
+		return sorted_unique.front();
+	for (size_t i = 0; i < sorted_unique.size(); i++) {
+		if (sorted_unique[i] != last)
 			continue;
-		sum_r += mag_r[static_cast<size_t>(i)];
-		sum_c += mag_c[static_cast<size_t>(i)];
-		count++;
+		return sorted_unique[(i + 1) % sorted_unique.size()];
 	}
-	if (count < 16)
-		return false;
-
-	const double mean_r = sum_r / count;
-	const double mean_c = sum_c / count;
-	double num = 0, den_r = 0, den_c = 0;
-	for (int i = 0; i < n; i++) {
-		if (band[static_cast<size_t>(i)] < 128)
-			continue;
-		const double dr = mag_r[static_cast<size_t>(i)] - mean_r;
-		const double dc = mag_c[static_cast<size_t>(i)] - mean_c;
-		num += dr * dc;
-		den_r += dr * dr;
-		den_c += dc * dc;
-	}
-	if (den_r < 1e-6 && den_c < 1e-6) {
-		*score = 1.0f;
-		return true;
-	}
-	if (den_r < 1e-6 || den_c < 1e-6) {
-		*score = 0.0f;
-		return true;
-	}
-	const double r = num / std::sqrt(den_r * den_c);
-	*score = r < 0 ? 0.0f : static_cast<float>(r > 1 ? 1 : r);
-	return true;
+	return sorted_unique.front();
 }
 
 float mask_presence_threshold(int match_percent)
@@ -911,6 +967,96 @@ static void mask_scale_about_centroid(const std::vector<uint8_t> &src, int width
 		}
 	}
 	mask_dilate1(out, width, height);
+}
+
+static void mask_scale_planes_about_centroid(const std::vector<uint8_t> &luma, const std::vector<uint8_t> &band,
+					     int width, int height, float scale, std::vector<uint8_t> &out_luma,
+					     std::vector<uint8_t> &out_band)
+{
+	const int n = width * height;
+	out_luma.assign(static_cast<size_t>(n), 0);
+	out_band.assign(static_cast<size_t>(n), 0);
+	if (scale <= 0.01f || static_cast<int>(luma.size()) < n || static_cast<int>(band.size()) < n)
+		return;
+	double sx = 0, sy = 0;
+	int count = 0;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			sx += x;
+			sy += y;
+			count++;
+		}
+	}
+	if (count < 4)
+		return;
+	const double cx = sx / count;
+	const double cy = sy / count;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			const int nx = static_cast<int>(std::lround(cx + (x - cx) * scale));
+			const int ny = static_cast<int>(std::lround(cy + (y - cy) * scale));
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+				continue;
+			out_luma[static_cast<size_t>(ny) * width + nx] = luma[static_cast<size_t>(y) * width + x];
+			out_band[static_cast<size_t>(ny) * width + nx] = 255;
+		}
+	}
+	mask_dilate1(out_band, width, height);
+}
+
+bool mask_presence_match(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
+			 const std::vector<uint8_t> &band, int width, int height, int max_shift, float *score)
+{
+	if (!score)
+		return false;
+	*score = 0;
+	const int n = width * height;
+	if (width < 8 || height < 8)
+		return false;
+	if (static_cast<int>(ref_luma.size()) < n || static_cast<int>(cur_luma.size()) < n ||
+	    static_cast<int>(band.size()) < n)
+		return false;
+	if (max_shift < 0)
+		max_shift = 0;
+	if (max_shift > 8)
+		max_shift = 8;
+
+	std::vector<uint16_t> mag_c;
+	mask_sobel(cur_luma, width, height, mag_c);
+
+	const float scales[] = {1.0f, 0.88f, 0.76f, 0.64f};
+	float best = 0;
+	bool any = false;
+	for (float sc : scales) {
+		const std::vector<uint8_t> *ref_p = &ref_luma;
+		const std::vector<uint8_t> *band_p = &band;
+		std::vector<uint8_t> ref_s;
+		std::vector<uint8_t> band_s;
+		if (sc <= 0.99f) {
+			mask_scale_planes_about_centroid(ref_luma, band, width, height, sc, ref_s, band_s);
+			ref_p = &ref_s;
+			band_p = &band_s;
+		}
+		std::vector<uint16_t> mag_r;
+		mask_sobel(*ref_p, width, height, mag_r);
+		const int shift = sc > 0.99f ? max_shift : std::min(max_shift, 2);
+		for (int dy = -shift; dy <= shift; dy++) {
+			for (int dx = -shift; dx <= shift; dx++) {
+				float s = 0;
+				if (!presence_pearson(mag_r, mag_c, *band_p, width, height, dx, dy, &s))
+					continue;
+				any = true;
+				if (s > best)
+					best = s;
+			}
+		}
+	}
+	*score = best;
+	return any;
 }
 
 static float mask_outline_hit_rate(const std::vector<uint8_t> &outline, const std::vector<uint16_t> &mag,
