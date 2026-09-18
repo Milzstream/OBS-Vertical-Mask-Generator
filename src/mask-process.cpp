@@ -342,56 +342,6 @@ static void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height,
 	}
 }
 
-static void mask_feather_inward(std::vector<uint8_t> &gray, int width, int height, int radius)
-{
-	if (radius <= 0)
-		return;
-	const int n = width * height;
-	std::vector<int> dist(static_cast<size_t>(n), 9999);
-	std::vector<int> q;
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++) {
-			const int i = y * width + x;
-			if (gray[static_cast<size_t>(i)] < 128)
-				continue;
-			bool border = x == 0 || y == 0 || x == width - 1 || y == height - 1;
-			if (!border)
-				border = gray[static_cast<size_t>(i - 1)] < 128 || gray[static_cast<size_t>(i + 1)] < 128 ||
-					 gray[static_cast<size_t>(i - width)] < 128 ||
-					 gray[static_cast<size_t>(i + width)] < 128;
-			if (border) {
-				dist[static_cast<size_t>(i)] = 0;
-				q.push_back(i);
-			}
-		}
-	}
-	for (size_t qi = 0; qi < q.size(); qi++) {
-		const int i = q[qi];
-		const int nd = dist[static_cast<size_t>(i)] + 1;
-		if (nd > radius)
-			continue;
-		const int px = i % width;
-		const int py = i / width;
-		const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < width ? i + 1 : -1, py > 0 ? i - width : -1,
-				   py + 1 < height ? i + width : -1};
-		for (int nbi : nb) {
-			if (nbi < 0 || gray[static_cast<size_t>(nbi)] < 128 || dist[static_cast<size_t>(nbi)] <= nd)
-				continue;
-			dist[static_cast<size_t>(nbi)] = nd;
-			q.push_back(nbi);
-		}
-	}
-	for (int i = 0; i < n; i++) {
-		if (gray[static_cast<size_t>(i)] < 128)
-			continue;
-		const int d = dist[static_cast<size_t>(i)];
-		if (d >= radius)
-			gray[static_cast<size_t>(i)] = 255;
-		else
-			gray[static_cast<size_t>(i)] = static_cast<uint8_t>(d * 255 / radius);
-	}
-}
-
 bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t> &lum, int width, int height, int search,
 		     std::vector<uint8_t> &out)
 {
@@ -416,8 +366,7 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 		return false;
 
 	std::vector<uint16_t> mag;
-	const int max_mag = mask_sobel(lum, width, height, mag);
-	const int thresh = std::max(28, max_mag / 3);
+	mask_sobel(lum, width, height, mag);
 
 	std::vector<int> label(static_cast<size_t>(n), 0);
 	int nlab = 0;
@@ -452,8 +401,16 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 
 	out.assign(static_cast<size_t>(n), 0);
 	bool any = false;
-	constexpr int k_rays = 160;
+	constexpr int k_rays = 192;
 	constexpr double k_pi = 3.14159265358979323846;
+
+	auto mag_at = [&](double cx, double cy, double dx, double dy, int t) -> int {
+		const int x = static_cast<int>(std::lround(cx + dx * t));
+		const int y = static_cast<int>(std::lround(cy + dy * t));
+		if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1)
+			return 0;
+		return static_cast<int>(mag[static_cast<size_t>(y) * width + x]);
+	};
 
 	for (int lab = 1; lab <= nlab; lab++) {
 		int ncc = 0;
@@ -495,28 +452,49 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 			}
 			if (exit_t < 0)
 				continue;
+
+			const int t0 = std::max(0, exit_t - search);
+			const int t1 = exit_t + search;
+			int local_max = 1;
+			for (int t = t0; t <= t1; t++)
+				local_max = std::max(local_max, mag_at(cx, cy, dx, dy, t));
+			const int local_thresh = std::max(24, local_max / 4);
+
 			int best_t = exit_t;
-			double best_score = -1;
-			for (int t = std::max(0, exit_t - search); t <= exit_t + search; t++) {
-				const int x = static_cast<int>(std::lround(cx + dx * t));
-				const int y = static_cast<int>(std::lround(cy + dy * t));
-				if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1)
+			int best_dist = search + 1;
+			for (int t = t0; t <= t1; t++) {
+				const int m = mag_at(cx, cy, dx, dy, t);
+				if (m < local_thresh)
 					continue;
-				const int m = static_cast<int>(mag[static_cast<size_t>(y) * width + x]);
-				const double fall = 1.0 - 0.8 * std::abs(t - exit_t) / static_cast<double>(search);
-				const double score = m * fall;
-				if (score > best_score) {
-					best_score = score;
+				const int ml = mag_at(cx, cy, dx, dy, t - 1);
+				const int mr = mag_at(cx, cy, dx, dy, t + 1);
+				if (m < ml || m < mr)
+					continue;
+				const int dist = std::abs(t - exit_t);
+				if (dist < best_dist) {
+					best_dist = dist;
 					best_t = t;
 				}
 			}
-			if (best_score < thresh)
-				best_t = exit_t;
 			poly.push_back({static_cast<float>(cx + dx * best_t), static_cast<float>(cy + dy * best_t)});
 		}
 		if (poly.size() < 8)
 			continue;
-		mask_fill_polygon(out, width, height, poly);
+
+		std::vector<MaskPoint> smooth = poly;
+		const int pn = static_cast<int>(poly.size());
+		const int wr = 3;
+		for (int i = 0; i < pn; i++) {
+			float px = 0, py = 0;
+			for (int k = -wr; k <= wr; k++) {
+				const MaskPoint &p = poly[static_cast<size_t>((i + k + pn * 8) % pn)];
+				px += p.x;
+				py += p.y;
+			}
+			smooth[static_cast<size_t>(i)] = {px / static_cast<float>(wr * 2 + 1),
+							  py / static_cast<float>(wr * 2 + 1)};
+		}
+		mask_fill_polygon(out, width, height, smooth);
 		any = true;
 	}
 
@@ -524,7 +502,6 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 		out.clear();
 		return false;
 	}
-	mask_feather_inward(out, width, height, 3);
 	return true;
 }
 
@@ -743,6 +720,83 @@ void mask_resize_mask(const std::vector<uint8_t> &src, int src_w, int src_h, std
 	mask_resize_luma(src, src_w, src_h, dst, dst_w, dst_h);
 }
 
+void mask_presence_prepare_mask(std::vector<uint8_t> &gray, int width, int height, int expand, int feather)
+{
+	if (expand == 0 && feather <= 0)
+		return;
+	mask_binarize(gray);
+	if (expand != 0)
+		mask_expand(gray, width, height, expand);
+	if (feather > 0)
+		mask_feather(gray, width, height, feather);
+}
+
+static bool presence_pearson(const std::vector<uint16_t> &mag_r, const std::vector<uint16_t> &mag_c,
+			     const std::vector<uint8_t> &band, int width, int height, int dx, int dy, float *score)
+{
+	if (!score)
+		return false;
+	*score = 0;
+	const int n = width * height;
+	if (width < 3 || height < 3)
+		return false;
+	if (static_cast<int>(mag_r.size()) < n || static_cast<int>(mag_c.size()) < n ||
+	    static_cast<int>(band.size()) < n)
+		return false;
+
+	double sum_r = 0, sum_c = 0;
+	int count = 0;
+	for (int y = 0; y < height; y++) {
+		const int cy = y + dy;
+		if (cy < 0 || cy >= height)
+			continue;
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			const int cx = x + dx;
+			if (cx < 0 || cx >= width)
+				continue;
+			sum_r += mag_r[static_cast<size_t>(y) * width + x];
+			sum_c += mag_c[static_cast<size_t>(cy) * width + cx];
+			count++;
+		}
+	}
+	if (count < 16)
+		return false;
+
+	const double mean_r = sum_r / count;
+	const double mean_c = sum_c / count;
+	double num = 0, den_r = 0, den_c = 0;
+	for (int y = 0; y < height; y++) {
+		const int cy = y + dy;
+		if (cy < 0 || cy >= height)
+			continue;
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			const int cx = x + dx;
+			if (cx < 0 || cx >= width)
+				continue;
+			const double dr = mag_r[static_cast<size_t>(y) * width + x] - mean_r;
+			const double dc = mag_c[static_cast<size_t>(cy) * width + cx] - mean_c;
+			num += dr * dc;
+			den_r += dr * dr;
+			den_c += dc * dc;
+		}
+	}
+	if (den_r < 1e-6 && den_c < 1e-6) {
+		*score = 1.0f;
+		return true;
+	}
+	if (den_r < 1e-6 || den_c < 1e-6) {
+		*score = 0.0f;
+		return true;
+	}
+	const double r = num / std::sqrt(den_r * den_c);
+	*score = r < 0 ? 0.0f : static_cast<float>(r > 1 ? 1 : r);
+	return true;
+}
+
 bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
 			 const std::vector<uint8_t> &band, int width, int height, float *score)
 {
@@ -760,42 +814,21 @@ bool mask_presence_score(const std::vector<uint8_t> &ref_luma, const std::vector
 	std::vector<uint16_t> mag_c;
 	mask_sobel(ref_luma, width, height, mag_r);
 	mask_sobel(cur_luma, width, height, mag_c);
+	return presence_pearson(mag_r, mag_c, band, width, height, 0, 0, score);
+}
 
-	double sum_r = 0, sum_c = 0;
-	int count = 0;
-	for (int i = 0; i < n; i++) {
-		if (band[static_cast<size_t>(i)] < 128)
+std::string mask_presence_next_target(const std::vector<std::string> &sorted_unique, const std::string &last)
+{
+	if (sorted_unique.empty())
+		return {};
+	if (last.empty())
+		return sorted_unique.front();
+	for (size_t i = 0; i < sorted_unique.size(); i++) {
+		if (sorted_unique[i] != last)
 			continue;
-		sum_r += mag_r[static_cast<size_t>(i)];
-		sum_c += mag_c[static_cast<size_t>(i)];
-		count++;
+		return sorted_unique[(i + 1) % sorted_unique.size()];
 	}
-	if (count < 16)
-		return false;
-
-	const double mean_r = sum_r / count;
-	const double mean_c = sum_c / count;
-	double num = 0, den_r = 0, den_c = 0;
-	for (int i = 0; i < n; i++) {
-		if (band[static_cast<size_t>(i)] < 128)
-			continue;
-		const double dr = mag_r[static_cast<size_t>(i)] - mean_r;
-		const double dc = mag_c[static_cast<size_t>(i)] - mean_c;
-		num += dr * dc;
-		den_r += dr * dr;
-		den_c += dc * dc;
-	}
-	if (den_r < 1e-6 && den_c < 1e-6) {
-		*score = 1.0f;
-		return true;
-	}
-	if (den_r < 1e-6 || den_c < 1e-6) {
-		*score = 0.0f;
-		return true;
-	}
-	const double r = num / std::sqrt(den_r * den_c);
-	*score = r < 0 ? 0.0f : static_cast<float>(r > 1 ? 1 : r);
-	return true;
+	return sorted_unique.front();
 }
 
 float mask_presence_threshold(int match_percent)
@@ -805,6 +838,33 @@ float mask_presence_threshold(int match_percent)
 	if (match_percent > 100)
 		match_percent = 100;
 	return static_cast<float>(match_percent) / 100.0f;
+}
+
+bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, int hysteresis)
+{
+	if (hysteresis < 1)
+		hysteresis = 1;
+	const float thresh = mask_presence_threshold(match_percent);
+	const float show_need = std::min(0.95f, thresh + 0.04f);
+	const float hide_need = std::max(0.0f, thresh - 0.04f);
+	bool want = gate.shown;
+	if (gate.shown) {
+		if (score < hide_need)
+			want = false;
+	} else if (score >= show_need) {
+		want = true;
+	}
+	if (want == gate.shown) {
+		gate.streak = 0;
+		return false;
+	}
+	gate.streak++;
+	if (gate.streak >= hysteresis) {
+		gate.shown = want;
+		gate.streak = 0;
+		return true;
+	}
+	return false;
 }
 
 void mask_blob_outline(const std::vector<uint8_t> &mask, int width, int height, std::vector<uint8_t> &outline)
@@ -850,6 +910,22 @@ static void mask_dilate1(std::vector<uint8_t> &img, int width, int height)
 	(void)n;
 }
 
+void mask_presence_rim(const std::vector<uint8_t> &mask, int width, int height, int thickness, std::vector<uint8_t> &rim)
+{
+	mask_blob_outline(mask, width, height, rim);
+	if (thickness < 1)
+		thickness = 1;
+	for (int i = 0; i < thickness; i++)
+		mask_dilate1(rim, width, height);
+	const int n = width * height;
+	if (static_cast<int>(mask.size()) < n)
+		return;
+	for (int i = 0; i < n; i++) {
+		if (mask[static_cast<size_t>(i)] < 20)
+			rim[static_cast<size_t>(i)] = 0;
+	}
+}
+
 static void mask_scale_about_centroid(const std::vector<uint8_t> &src, int width, int height, float scale,
 				      std::vector<uint8_t> &out)
 {
@@ -884,6 +960,96 @@ static void mask_scale_about_centroid(const std::vector<uint8_t> &src, int width
 		}
 	}
 	mask_dilate1(out, width, height);
+}
+
+static void mask_scale_planes_about_centroid(const std::vector<uint8_t> &luma, const std::vector<uint8_t> &band,
+					     int width, int height, float scale, std::vector<uint8_t> &out_luma,
+					     std::vector<uint8_t> &out_band)
+{
+	const int n = width * height;
+	out_luma.assign(static_cast<size_t>(n), 0);
+	out_band.assign(static_cast<size_t>(n), 0);
+	if (scale <= 0.01f || static_cast<int>(luma.size()) < n || static_cast<int>(band.size()) < n)
+		return;
+	double sx = 0, sy = 0;
+	int count = 0;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			sx += x;
+			sy += y;
+			count++;
+		}
+	}
+	if (count < 4)
+		return;
+	const double cx = sx / count;
+	const double cy = sy / count;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			if (band[static_cast<size_t>(y) * width + x] < 128)
+				continue;
+			const int nx = static_cast<int>(std::lround(cx + (x - cx) * scale));
+			const int ny = static_cast<int>(std::lround(cy + (y - cy) * scale));
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+				continue;
+			out_luma[static_cast<size_t>(ny) * width + nx] = luma[static_cast<size_t>(y) * width + x];
+			out_band[static_cast<size_t>(ny) * width + nx] = 255;
+		}
+	}
+	mask_dilate1(out_band, width, height);
+}
+
+bool mask_presence_match(const std::vector<uint8_t> &ref_luma, const std::vector<uint8_t> &cur_luma,
+			 const std::vector<uint8_t> &band, int width, int height, int max_shift, float *score)
+{
+	if (!score)
+		return false;
+	*score = 0;
+	const int n = width * height;
+	if (width < 8 || height < 8)
+		return false;
+	if (static_cast<int>(ref_luma.size()) < n || static_cast<int>(cur_luma.size()) < n ||
+	    static_cast<int>(band.size()) < n)
+		return false;
+	if (max_shift < 0)
+		max_shift = 0;
+	if (max_shift > 8)
+		max_shift = 8;
+
+	std::vector<uint16_t> mag_c;
+	mask_sobel(cur_luma, width, height, mag_c);
+
+	const float scales[] = {1.0f, 0.88f, 0.76f, 0.64f};
+	float best = 0;
+	bool any = false;
+	for (float sc : scales) {
+		const std::vector<uint8_t> *ref_p = &ref_luma;
+		const std::vector<uint8_t> *band_p = &band;
+		std::vector<uint8_t> ref_s;
+		std::vector<uint8_t> band_s;
+		if (sc <= 0.99f) {
+			mask_scale_planes_about_centroid(ref_luma, band, width, height, sc, ref_s, band_s);
+			ref_p = &ref_s;
+			band_p = &band_s;
+		}
+		std::vector<uint16_t> mag_r;
+		mask_sobel(*ref_p, width, height, mag_r);
+		const int shift = sc > 0.99f ? max_shift : std::min(max_shift, 2);
+		for (int dy = -shift; dy <= shift; dy++) {
+			for (int dx = -shift; dx <= shift; dx++) {
+				float s = 0;
+				if (!presence_pearson(mag_r, mag_c, *band_p, width, height, dx, dy, &s))
+					continue;
+				any = true;
+				if (s > best)
+					best = s;
+			}
+		}
+	}
+	*score = best;
+	return any;
 }
 
 static float mask_outline_hit_rate(const std::vector<uint8_t> &outline, const std::vector<uint16_t> &mag,

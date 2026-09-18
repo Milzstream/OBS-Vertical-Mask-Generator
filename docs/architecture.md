@@ -41,7 +41,7 @@ Every frame (GPU), per visible HUD Mask
 
 ### Auto-hide
 
-Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide-on instances by sampled target and does **one** downsample/readback per target. Each mask scores the **outer band** of its paint against the Draw mask still (Pearson correlation, brightness-invariant). Interiors can change. Hidden scene items are skipped. Fade and a match slider live on the properties pane. The scene-item eyeball is never toggled; the source draws transparent instead.
+Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide-on instances by sampled target and does **one** downsample/readback per target per cycle (round-robin when several targets are live). Each mask scores the **processed** paint (expand / feather) against the Draw mask still (Pearson on edges, small translation search). Interiors can change. Hidden scene items are skipped. Fade and a match slider live on the properties pane. The scene-item eyeball is never toggled; the source draws transparent instead.
 
 ## Highlight tools (setup only)
 

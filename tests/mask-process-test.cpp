@@ -50,6 +50,19 @@ static std::vector<uint8_t> hollow_rect(int w, int h, int x0, int y0, int x1, in
 	return g;
 }
 
+static std::vector<uint8_t> box_panel(int w, int h, uint8_t border, uint8_t fill, int x0, int y0, int x1, int y1,
+				      int thick = 2)
+{
+	std::vector<uint8_t> g(static_cast<size_t>(w) * h, 40);
+	for (int y = y0; y <= y1; y++) {
+		for (int x = x0; x <= x1; x++) {
+			const bool rim = x <= x0 + thick || x >= x1 - thick || y <= y0 + thick || y >= y1 - thick;
+			g[static_cast<size_t>(y) * w + x] = rim ? border : fill;
+		}
+	}
+	return g;
+}
+
 int main()
 {
 	/* Expand grows the opaque region. */
@@ -377,6 +390,58 @@ int main()
 		CHECK(out[static_cast<size_t>(2) * w + 2] < 128);
 	}
 
+	/* Filled overpaint snaps to the outer frame, not inner art, and re-snap does not shrink. */
+	{
+		const int w = 64, h = 64;
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h, 40);
+		for (int y = 16; y <= 47; y++) {
+			for (int x = 16; x <= 47; x++) {
+				const bool frame = x <= 18 || x >= 45 || y <= 18 || y >= 45;
+				lum[static_cast<size_t>(y) * w + x] = frame ? 220 : 90;
+			}
+		}
+		for (int y = 28; y <= 35; y++)
+			for (int x = 28; x <= 35; x++)
+				lum[static_cast<size_t>(y) * w + x] = 255;
+
+		auto user = filled_square(w, h, 12, 12, 51, 51);
+		std::vector<uint8_t> out;
+		CHECK(mask_snap_edges(user, lum, w, h, 12, out));
+
+		auto bbox = [](const std::vector<uint8_t> &g, int w, int h, int *minx, int *miny, int *maxx, int *maxy) {
+			*minx = w;
+			*miny = h;
+			*maxx = -1;
+			*maxy = -1;
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					if (g[static_cast<size_t>(y) * w + x] < 128)
+						continue;
+					*minx = std::min(*minx, x);
+					*miny = std::min(*miny, y);
+					*maxx = std::max(*maxx, x);
+					*maxy = std::max(*maxy, y);
+				}
+			}
+		};
+		int minx, miny, maxx, maxy;
+		bbox(out, w, h, &minx, &miny, &maxx, &maxy);
+		CHECK(minx >= 12 && miny >= 12);
+		CHECK(maxx <= 51 && maxy <= 51);
+		CHECK(minx <= 20 && miny <= 20);
+		CHECK(maxx >= 43 && maxy >= 43);
+		CHECK(!(minx >= 26 && maxx <= 37 && miny >= 26 && maxy <= 37));
+
+		std::vector<uint8_t> out2;
+		CHECK(mask_snap_edges(out, lum, w, h, 12, out2));
+		int minx2, miny2, maxx2, maxy2;
+		bbox(out2, w, h, &minx2, &miny2, &maxx2, &maxy2);
+		CHECK(std::abs(minx2 - minx) <= 3);
+		CHECK(std::abs(miny2 - miny) <= 3);
+		CHECK(std::abs(maxx2 - maxx) <= 3);
+		CHECK(std::abs(maxy2 - maxy) <= 3);
+	}
+
 	/* Magic loop around a filled rectangle hugs the outer edge, not an inner hole. */
 	{
 		const int w = 64, h = 64;
@@ -423,6 +488,8 @@ int main()
 	CHECK(mask_presence_threshold(50) == 0.5f);
 	CHECK(mask_presence_threshold(80) == 0.8f);
 	CHECK(mask_presence_threshold(100) == 1.0f);
+	CHECK(mask_presence_threshold(-20) == 0.0f);
+	CHECK(mask_presence_threshold(150) == 1.0f);
 	CHECK(mask_presence_threshold(50) > mask_presence_threshold(0));
 	CHECK(mask_presence_threshold(50) < mask_presence_threshold(100));
 
@@ -480,6 +547,222 @@ int main()
 			world1[static_cast<size_t>(i)] = static_cast<uint8_t>(((i + 17) * 29) & 255);
 		}
 		CHECK(mask_presence_outline_score(mask, world1, &world0, w, h, &score));
+		CHECK(score < mask_presence_threshold(50));
+	}
+
+	/* Hide/show gate: deadband + 3-frame streak. */
+	{
+		MaskPresenceGate g;
+		CHECK(g.shown);
+		CHECK(!mask_presence_gate(g, 0.50f, 50, 3));
+		CHECK(g.shown && g.streak == 0);
+
+		CHECK(!mask_presence_gate(g, 0.40f, 50, 3));
+		CHECK(!mask_presence_gate(g, 0.40f, 50, 3));
+		CHECK(g.shown && g.streak == 2);
+		CHECK(mask_presence_gate(g, 0.40f, 50, 3));
+		CHECK(!g.shown && g.streak == 0);
+
+		CHECK(!mask_presence_gate(g, 0.70f, 50, 3));
+		CHECK(!mask_presence_gate(g, 0.70f, 50, 3));
+		CHECK(mask_presence_gate(g, 0.70f, 50, 3));
+		CHECK(g.shown && g.streak == 0);
+
+		CHECK(!mask_presence_gate(g, 0.40f, 50, 3));
+		CHECK(g.streak == 1);
+		CHECK(!mask_presence_gate(g, 0.50f, 50, 3));
+		CHECK(g.shown && g.streak == 0);
+
+		g = {};
+		CHECK(!mask_presence_gate(g, 0.0f, 0, 3));
+		CHECK(g.shown);
+	}
+
+	/* Blob outline is the rim of the paint, not the interior. */
+	{
+		auto mask = filled_square(16, 16, 4, 4, 11, 11);
+		std::vector<uint8_t> outline;
+		mask_blob_outline(mask, 16, 16, outline);
+		CHECK(outline[static_cast<size_t>(4) * 16 + 4] == 255);
+		CHECK(outline[static_cast<size_t>(7) * 16 + 7] == 0);
+		CHECK(outline[static_cast<size_t>(0) * 16 + 0] == 0);
+		int rim = 0;
+		for (uint8_t p : outline)
+			if (p)
+				rim++;
+		CHECK(rim > 0 && rim < count_opaque(mask));
+	}
+
+	/* Presence band insets from the paint; tiny paint is used as-is. */
+	{
+		auto mask = filled_square(32, 32, 6, 6, 25, 25);
+		std::vector<uint8_t> band;
+		mask_presence_band(mask, nullptr, 32, 32, 3, band);
+		CHECK(band[static_cast<size_t>(16) * 32 + 16] == 255);
+		CHECK(band[static_cast<size_t>(6) * 32 + 6] == 0);
+		CHECK(band[static_cast<size_t>(0) * 32 + 0] == 0);
+
+		auto tiny = filled_square(16, 16, 7, 7, 8, 8);
+		std::vector<uint8_t> tiny_band;
+		mask_presence_band(tiny, nullptr, 16, 16, 4, tiny_band);
+		CHECK(tiny_band[static_cast<size_t>(7) * 16 + 7] == 255);
+		CHECK(tiny_band[static_cast<size_t>(8) * 16 + 8] == 255);
+		CHECK(tiny_band[static_cast<size_t>(0) * 16 + 0] == 0);
+	}
+
+	/* Nearest-neighbor resize keeps a solid block in the same relative place. */
+	{
+		auto src = filled_square(8, 8, 2, 2, 5, 5);
+		std::vector<uint8_t> dst;
+		mask_resize_luma(src, 8, 8, dst, 4, 4);
+		CHECK(static_cast<int>(dst.size()) == 16);
+		CHECK(dst[static_cast<size_t>(1) * 4 + 1] == 255);
+		CHECK(dst[0] == 0);
+		mask_resize_mask(src, 8, 8, dst, 8, 8);
+		CHECK(dst == src);
+	}
+
+	/* Pearson ref score: same still is high; a different structure is low. */
+	{
+		const int w = 48, h = 48;
+		auto mask = filled_square(w, h, 8, 8, 39, 39);
+		std::vector<uint8_t> band;
+		mask_presence_band(mask, nullptr, w, h, 2, band);
+		auto hud = box_panel(w, h, 220, 90, 8, 8, 39, 39);
+		float score = 0;
+		CHECK(mask_presence_score(hud, hud, band, w, h, &score));
+		CHECK(score > 0.9f);
+
+		auto dim = box_panel(w, h, 80, 30, 8, 8, 39, 39);
+		CHECK(mask_presence_score(hud, dim, band, w, h, &score));
+		CHECK(score > 0.5f);
+
+		std::vector<uint8_t> noise(static_cast<size_t>(w) * h);
+		for (int i = 0; i < w * h; i++)
+			noise[static_cast<size_t>(i)] = static_cast<uint8_t>((i * 37) & 255);
+		CHECK(mask_presence_score(hud, noise, band, w, h, &score));
+		CHECK(score < 0.5f);
+
+		CHECK(!mask_presence_score(hud, hud, band, 2, 2, &score));
+		CHECK(!mask_presence_outline_score(mask, hud, nullptr, 4, 4, &score));
+	}
+
+	CHECK(mask_presence_next_target({}, "").empty());
+	CHECK(mask_presence_next_target({"cam"}, "") == "cam");
+	CHECK(mask_presence_next_target({"cam"}, "cam") == "cam");
+	CHECK(mask_presence_next_target({"a", "b"}, "") == "a");
+	CHECK(mask_presence_next_target({"a", "b"}, "a") == "b");
+	CHECK(mask_presence_next_target({"a", "b"}, "b") == "a");
+	CHECK(mask_presence_next_target({"a", "b"}, "z") == "a");
+
+	/* Expand/feather change the outline vs the raw paint (issue #27). */
+	{
+		const int w = 48, h = 48;
+		auto raw = filled_square(w, h, 16, 16, 31, 31);
+		auto processed = raw;
+		mask_presence_prepare_mask(processed, w, h, 4, 2);
+		CHECK(count_opaque(processed) > count_opaque(raw));
+
+		std::vector<uint8_t> raw_o, proc_o;
+		mask_blob_outline(raw, w, h, raw_o);
+		mask_blob_outline(processed, w, h, proc_o);
+		CHECK(raw_o != proc_o);
+
+		auto live = box_panel(w, h, 220, 40, 12, 12, 35, 35, 1);
+		float raw_score = 0, proc_score = 0;
+		CHECK(mask_presence_outline_score(raw, live, nullptr, w, h, &raw_score));
+		CHECK(mask_presence_outline_score(processed, live, nullptr, w, h, &proc_score));
+		CHECK(proc_score > raw_score);
+	}
+
+	/* Outline energy still treats a nearby box as a hit; still-match does not (#22). */
+	{
+		const int w = 48, h = 48;
+		auto mask = filled_square(w, h, 8, 8, 39, 39);
+		auto hud = box_panel(w, h, 220, 90, 8, 8, 39, 39);
+		auto cutscene = box_panel(w, h, 255, 10, 10, 14, 36, 34, 3);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				if (x < 8 || x > 39 || y < 8 || y > 39)
+					cutscene[static_cast<size_t>(y) * w + x] =
+						static_cast<uint8_t>(30 + ((x * 13 + y * 7) & 80));
+
+		float outline_hud = 0, outline_cut = 0, match_cut = 0, match_hud = 0;
+		CHECK(mask_presence_outline_score(mask, hud, nullptr, w, h, &outline_hud));
+		CHECK(mask_presence_outline_score(mask, cutscene, nullptr, w, h, &outline_cut));
+		CHECK(outline_hud > mask_presence_threshold(50));
+		CHECK(outline_cut > mask_presence_threshold(50));
+
+		std::vector<uint8_t> band;
+		mask_presence_band(mask, &hud, w, h, 2, band);
+		CHECK(mask_presence_match(hud, hud, band, w, h, 3, &match_hud));
+		CHECK(match_hud > mask_presence_threshold(50));
+		CHECK(mask_presence_match(hud, cutscene, band, w, h, 3, &match_cut));
+		CHECK(match_cut < mask_presence_threshold(50));
+		CHECK(match_cut < outline_cut);
+	}
+
+	/* Still-match: recolor, empty slot, drift, and gone. */
+	{
+		const int w = 48, h = 48;
+		auto mask = filled_square(w, h, 8, 8, 39, 39);
+		auto hud = box_panel(w, h, 220, 90, 8, 8, 39, 39);
+		std::vector<uint8_t> band;
+		mask_presence_band(mask, &hud, w, h, 2, band);
+		float score = 0;
+
+		auto red = box_panel(w, h, 40, 200, 8, 8, 39, 39);
+		CHECK(mask_presence_match(hud, red, band, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		auto empty = box_panel(w, h, 160, 50, 12, 12, 35, 35);
+		CHECK(mask_presence_match(hud, empty, band, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		std::vector<uint8_t> shifted(static_cast<size_t>(w) * h, 40);
+		for (int y = 0; y < h; y++)
+			for (int x = 2; x < w; x++)
+				shifted[static_cast<size_t>(y) * w + x] = hud[static_cast<size_t>(y) * w + (x - 2)];
+		CHECK(mask_presence_match(hud, shifted, band, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		std::vector<uint8_t> gone(static_cast<size_t>(w) * h);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				gone[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(60 + (x + y) * 80 / (w + h));
+		CHECK(mask_presence_match(hud, gone, band, w, h, 3, &score));
+		CHECK(score < mask_presence_threshold(50));
+	}
+
+	/* Rim is the slot border. Next-round interior/floor changes should still match. */
+	{
+		const int w = 48, h = 48;
+		auto mask = filled_square(w, h, 8, 8, 39, 39);
+		std::vector<uint8_t> rim;
+		mask_presence_rim(mask, w, h, 2, rim);
+		CHECK(rim[static_cast<size_t>(8) * w + 8] == 255);
+		CHECK(rim[static_cast<size_t>(24) * w + 24] == 0);
+
+		auto round1 = box_panel(w, h, 220, 90, 8, 8, 39, 39);
+		for (int y = 14; y <= 33; y++)
+			for (int x = 14; x <= 33; x++)
+				round1[static_cast<size_t>(y) * w + x] = 200;
+		auto round2 = box_panel(w, h, 200, 40, 8, 8, 39, 39);
+		for (int y = 14; y <= 33; y++)
+			for (int x = 14; x <= 33; x++)
+				round2[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(30 + ((x * 19 + y * 11) & 90));
+		float score = 0;
+		CHECK(mask_presence_match(round1, round2, rim, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		std::vector<uint8_t> gone(static_cast<size_t>(w) * h);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				gone[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(60 + (x + y) * 80 / (w + h));
+		CHECK(mask_presence_match(round1, gone, rim, w, h, 3, &score));
 		CHECK(score < mask_presence_threshold(50));
 	}
 

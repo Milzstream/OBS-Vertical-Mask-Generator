@@ -36,6 +36,7 @@ std::mutex g_mu;
 std::vector<hud_mask *> g_list;
 bool g_started = false;
 float g_wait = 0.0f;
+std::string g_last_target;
 
 struct Job {
 	obs_weak_source_t *weak = nullptr;
@@ -70,6 +71,24 @@ std::string ref_path_for_mask(const std::string &mask_path)
 	return p;
 }
 
+std::string still_path_for_mask(const std::string &mask_path)
+{
+	if (mask_path.empty())
+		return {};
+	std::string p = mask_path;
+	bool png = false;
+	if (p.size() >= 4) {
+		const char *e = p.c_str() + p.size() - 4;
+		png = e[0] == '.' && (e[1] == 'p' || e[1] == 'P') && (e[2] == 'n' || e[2] == 'N') &&
+		      (e[3] == 'g' || e[3] == 'G');
+	}
+	if (png)
+		p.replace(p.size() - 4, 4, ".still.png");
+	else
+		p += ".still.png";
+	return p;
+}
+
 void destroy_job(Job *job)
 {
 	if (!job)
@@ -92,28 +111,17 @@ void destroy_job(Job *job)
 
 void apply_score(hud_mask *ctx, float score)
 {
-	const float thresh = mask_presence_threshold(ctx->match_pct);
-	/* Must clear a small gap past the line so 0.49/0.53 cannot chatter. */
-	const float show_need = std::min(0.95f, thresh + 0.04f);
-	const float hide_need = std::max(0.0f, thresh - 0.04f);
-	bool want = ctx->presence_shown;
-	if (ctx->presence_shown) {
-		if (score < hide_need)
-			want = false;
-	} else if (score >= show_need) {
-		want = true;
-	}
-	if (want == ctx->presence_shown) {
-		ctx->presence_streak = 0;
-		return;
-	}
-	ctx->presence_streak++;
-	if (ctx->presence_streak >= k_hysteresis) {
+	MaskPresenceGate gate;
+	gate.shown = ctx->presence_shown;
+	gate.streak = ctx->presence_streak;
+	if (mask_presence_gate(gate, score, ctx->match_pct, k_hysteresis)) {
+		const float thresh = mask_presence_threshold(ctx->match_pct);
 		obs_log(LOG_INFO, "auto-hide %s (score %.2f, hide below %.2f, show at %.2f)",
-			want ? "show" : "hide", score, hide_need, show_need);
-		ctx->presence_shown = want;
-		ctx->presence_streak = 0;
+			gate.shown ? "show" : "hide", score, std::max(0.0f, thresh - 0.04f),
+			std::min(0.95f, thresh + 0.04f));
 	}
+	ctx->presence_shown = gate.shown;
+	ctx->presence_streak = gate.streak;
 }
 
 void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_t ds_cx, uint32_t ds_cy,
@@ -146,25 +154,26 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 	if (ctx->mask_w < 1 || ctx->mask_h < 1 || ctx->mask_gray.empty())
 		return;
 
+	std::vector<uint8_t> processed = ctx->mask_gray;
+	mask_presence_prepare_mask(processed, ctx->mask_w, ctx->mask_h, ctx->expand, ctx->feather);
 	std::vector<uint8_t> mask_s;
-	mask_resize_mask(ctx->mask_gray, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
+	mask_resize_mask(processed, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
 
-	const std::vector<uint8_t> *prev = nullptr;
-	if (ctx->presence_prev_w == rw && ctx->presence_prev_h == rh &&
-	    static_cast<int>(ctx->presence_prev.size()) == rw * rh)
-		prev = &ctx->presence_prev;
-
-	float score = 0;
-	if (!mask_presence_outline_score(mask_s, roi, prev, rw, rh, &score)) {
-		ctx->presence_prev = std::move(roi);
-		ctx->presence_prev_w = rw;
-		ctx->presence_prev_h = rh;
+	if (!ctx->ref_valid || ctx->ref_luma.empty() || ctx->ref_w < 1 || ctx->ref_h < 1) {
+		if (ctx->auto_hide)
+			hud_mask_presence_save_ref(ctx, roi.data(), mask_s.data(), rw, rh);
 		return;
 	}
+
+	std::vector<uint8_t> ref_s;
+	mask_resize_luma(ctx->ref_luma, ctx->ref_w, ctx->ref_h, ref_s, rw, rh);
+	std::vector<uint8_t> rim;
+	mask_presence_rim(mask_s, rw, rh, 2, rim);
+
+	float score = 0;
+	if (!mask_presence_match(ref_s, roi, rim, rw, rh, 3, &score))
+		return;
 	apply_score(ctx, score);
-	ctx->presence_prev = std::move(roi);
-	ctx->presence_prev_w = rw;
-	ctx->presence_prev_h = rh;
 }
 
 void finish_job_on_graphics()
@@ -227,7 +236,15 @@ bool start_job()
 	if (groups.empty())
 		return false;
 
-	auto it = groups.begin();
+	std::vector<std::string> names;
+	names.reserve(groups.size());
+	for (const auto &g : groups)
+		names.push_back(g.first);
+	const std::string pick = mask_presence_next_target(names, g_last_target);
+	g_last_target = pick;
+	auto it = groups.find(pick);
+	if (it == groups.end())
+		it = groups.begin();
 	hud_mask *lead = it->second.front();
 	obs_source_t *target = hud_mask_get_target(lead);
 	if (!target)
@@ -320,6 +337,11 @@ void presence_tick(void *, float seconds)
 
 } // namespace
 
+std::string hud_mask_presence_still_path(const std::string &mask_path)
+{
+	return still_path_for_mask(mask_path);
+}
+
 void hud_mask_presence_start(void)
 {
 	if (g_started)
@@ -374,6 +396,9 @@ void hud_mask_presence_clear_ref(hud_mask *ctx)
 		const std::string path = ref_path_for_mask(ctx->mask_path);
 		if (!path.empty())
 			os_unlink(path.c_str());
+		const std::string still = still_path_for_mask(ctx->mask_path);
+		if (!still.empty())
+			os_unlink(still.c_str());
 	}
 	ctx->ref_valid = false;
 	ctx->ref_capture_pending = false;
