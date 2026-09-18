@@ -19,6 +19,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QObject>
 #include <QPushButton>
 #include <QUrl>
@@ -226,10 +227,13 @@ void show_update_dialog(const ReleaseInfo info)
 		std::string url = !info.download_url.empty() ? info.download_url : info.page_url;
 		if (mask_normalize_https_url(url)) {
 			const QUrl qurl = QUrl::fromEncoded(QByteArray(url.data(), static_cast<int>(url.size())));
-			if (qurl.isValid() && qurl.scheme() == "https")
+			if (qurl.isValid() && qurl.scheme() == "https") {
 				QDesktopServices::openUrl(qurl);
-			else
+				if (parent)
+					QMetaObject::invokeMethod(parent, "close", Qt::QueuedConnection);
+			} else {
 				obs_log(LOG_WARNING, "update check: invalid HTTPS url");
+			}
 		} else {
 			obs_log(LOG_WARNING, "update check: refused non-HTTPS download url");
 		}

@@ -68,3 +68,34 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+function IsOBSRunning: Boolean;
+var
+  Locator: Variant;
+  Service: Variant;
+  ResultSet: Variant;
+begin
+  Result := False;
+  try
+    Locator := CreateOleObject('WBEMScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    ResultSet := Service.ExecQuery('SELECT ProcessId FROM Win32_Process WHERE Name="obs64.exe" OR Name="obs32.exe"');
+    Result := ResultSet.Count > 0;
+  except
+    Result := False;
+  end;
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := True;
+  while IsOBSRunning do
+  begin
+    if MsgBox('OBS Studio is running. Close OBS, then click Retry to install HUD Mask.', mbInformation, MB_RETRYCANCEL) = IDCANCEL then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
