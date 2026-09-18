@@ -88,3 +88,12 @@ bool mask_presence_outline_score(const std::vector<uint8_t> &mask, const std::ve
 
 /* Map a 0–100 match slider to a hide threshold. 0 is lenient, 100 is strict. */
 float mask_presence_threshold(int match_percent);
+
+struct MaskPresenceGate {
+	bool shown = true;
+	int streak = 0;
+};
+
+/* Hide/show with a deadband around the match line and a streak before flipping.
+ * Returns true when shown changed. hysteresis < 1 is treated as 1. */
+bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, int hysteresis = 3);

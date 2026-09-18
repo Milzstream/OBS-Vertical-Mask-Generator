@@ -807,6 +807,33 @@ float mask_presence_threshold(int match_percent)
 	return static_cast<float>(match_percent) / 100.0f;
 }
 
+bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, int hysteresis)
+{
+	if (hysteresis < 1)
+		hysteresis = 1;
+	const float thresh = mask_presence_threshold(match_percent);
+	const float show_need = std::min(0.95f, thresh + 0.04f);
+	const float hide_need = std::max(0.0f, thresh - 0.04f);
+	bool want = gate.shown;
+	if (gate.shown) {
+		if (score < hide_need)
+			want = false;
+	} else if (score >= show_need) {
+		want = true;
+	}
+	if (want == gate.shown) {
+		gate.streak = 0;
+		return false;
+	}
+	gate.streak++;
+	if (gate.streak >= hysteresis) {
+		gate.shown = want;
+		gate.streak = 0;
+		return true;
+	}
+	return false;
+}
+
 void mask_blob_outline(const std::vector<uint8_t> &mask, int width, int height, std::vector<uint8_t> &outline)
 {
 	const int n = width * height;
