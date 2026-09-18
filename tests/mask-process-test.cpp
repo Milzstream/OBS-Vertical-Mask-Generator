@@ -390,6 +390,58 @@ int main()
 		CHECK(out[static_cast<size_t>(2) * w + 2] < 128);
 	}
 
+	/* Filled overpaint snaps to the outer frame, not inner art, and re-snap does not shrink. */
+	{
+		const int w = 64, h = 64;
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h, 40);
+		for (int y = 16; y <= 47; y++) {
+			for (int x = 16; x <= 47; x++) {
+				const bool frame = x <= 18 || x >= 45 || y <= 18 || y >= 45;
+				lum[static_cast<size_t>(y) * w + x] = frame ? 220 : 90;
+			}
+		}
+		for (int y = 28; y <= 35; y++)
+			for (int x = 28; x <= 35; x++)
+				lum[static_cast<size_t>(y) * w + x] = 255;
+
+		auto user = filled_square(w, h, 12, 12, 51, 51);
+		std::vector<uint8_t> out;
+		CHECK(mask_snap_edges(user, lum, w, h, 12, out));
+
+		auto bbox = [](const std::vector<uint8_t> &g, int w, int h, int *minx, int *miny, int *maxx, int *maxy) {
+			*minx = w;
+			*miny = h;
+			*maxx = -1;
+			*maxy = -1;
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					if (g[static_cast<size_t>(y) * w + x] < 128)
+						continue;
+					*minx = std::min(*minx, x);
+					*miny = std::min(*miny, y);
+					*maxx = std::max(*maxx, x);
+					*maxy = std::max(*maxy, y);
+				}
+			}
+		};
+		int minx, miny, maxx, maxy;
+		bbox(out, w, h, &minx, &miny, &maxx, &maxy);
+		CHECK(minx >= 12 && miny >= 12);
+		CHECK(maxx <= 51 && maxy <= 51);
+		CHECK(minx <= 20 && miny <= 20);
+		CHECK(maxx >= 43 && maxy >= 43);
+		CHECK(!(minx >= 26 && maxx <= 37 && miny >= 26 && maxy <= 37));
+
+		std::vector<uint8_t> out2;
+		CHECK(mask_snap_edges(out, lum, w, h, 12, out2));
+		int minx2, miny2, maxx2, maxy2;
+		bbox(out2, w, h, &minx2, &miny2, &maxx2, &maxy2);
+		CHECK(std::abs(minx2 - minx) <= 3);
+		CHECK(std::abs(miny2 - miny) <= 3);
+		CHECK(std::abs(maxx2 - maxx) <= 3);
+		CHECK(std::abs(maxy2 - maxy) <= 3);
+	}
+
 	/* Magic loop around a filled rectangle hugs the outer edge, not an inner hole. */
 	{
 		const int w = 64, h = 64;

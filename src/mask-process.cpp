@@ -342,56 +342,6 @@ static void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height,
 	}
 }
 
-static void mask_feather_inward(std::vector<uint8_t> &gray, int width, int height, int radius)
-{
-	if (radius <= 0)
-		return;
-	const int n = width * height;
-	std::vector<int> dist(static_cast<size_t>(n), 9999);
-	std::vector<int> q;
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++) {
-			const int i = y * width + x;
-			if (gray[static_cast<size_t>(i)] < 128)
-				continue;
-			bool border = x == 0 || y == 0 || x == width - 1 || y == height - 1;
-			if (!border)
-				border = gray[static_cast<size_t>(i - 1)] < 128 || gray[static_cast<size_t>(i + 1)] < 128 ||
-					 gray[static_cast<size_t>(i - width)] < 128 ||
-					 gray[static_cast<size_t>(i + width)] < 128;
-			if (border) {
-				dist[static_cast<size_t>(i)] = 0;
-				q.push_back(i);
-			}
-		}
-	}
-	for (size_t qi = 0; qi < q.size(); qi++) {
-		const int i = q[qi];
-		const int nd = dist[static_cast<size_t>(i)] + 1;
-		if (nd > radius)
-			continue;
-		const int px = i % width;
-		const int py = i / width;
-		const int nb[4] = {px > 0 ? i - 1 : -1, px + 1 < width ? i + 1 : -1, py > 0 ? i - width : -1,
-				   py + 1 < height ? i + width : -1};
-		for (int nbi : nb) {
-			if (nbi < 0 || gray[static_cast<size_t>(nbi)] < 128 || dist[static_cast<size_t>(nbi)] <= nd)
-				continue;
-			dist[static_cast<size_t>(nbi)] = nd;
-			q.push_back(nbi);
-		}
-	}
-	for (int i = 0; i < n; i++) {
-		if (gray[static_cast<size_t>(i)] < 128)
-			continue;
-		const int d = dist[static_cast<size_t>(i)];
-		if (d >= radius)
-			gray[static_cast<size_t>(i)] = 255;
-		else
-			gray[static_cast<size_t>(i)] = static_cast<uint8_t>(d * 255 / radius);
-	}
-}
-
 bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t> &lum, int width, int height, int search,
 		     std::vector<uint8_t> &out)
 {
@@ -416,8 +366,7 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 		return false;
 
 	std::vector<uint16_t> mag;
-	const int max_mag = mask_sobel(lum, width, height, mag);
-	const int thresh = std::max(28, max_mag / 3);
+	mask_sobel(lum, width, height, mag);
 
 	std::vector<int> label(static_cast<size_t>(n), 0);
 	int nlab = 0;
@@ -452,8 +401,16 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 
 	out.assign(static_cast<size_t>(n), 0);
 	bool any = false;
-	constexpr int k_rays = 160;
+	constexpr int k_rays = 192;
 	constexpr double k_pi = 3.14159265358979323846;
+
+	auto mag_at = [&](double cx, double cy, double dx, double dy, int t) -> int {
+		const int x = static_cast<int>(std::lround(cx + dx * t));
+		const int y = static_cast<int>(std::lround(cy + dy * t));
+		if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1)
+			return 0;
+		return static_cast<int>(mag[static_cast<size_t>(y) * width + x]);
+	};
 
 	for (int lab = 1; lab <= nlab; lab++) {
 		int ncc = 0;
@@ -495,28 +452,49 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 			}
 			if (exit_t < 0)
 				continue;
+
+			const int t0 = std::max(0, exit_t - search);
+			const int t1 = exit_t + search;
+			int local_max = 1;
+			for (int t = t0; t <= t1; t++)
+				local_max = std::max(local_max, mag_at(cx, cy, dx, dy, t));
+			const int local_thresh = std::max(24, local_max / 4);
+
 			int best_t = exit_t;
-			double best_score = -1;
-			for (int t = std::max(0, exit_t - search); t <= exit_t + search; t++) {
-				const int x = static_cast<int>(std::lround(cx + dx * t));
-				const int y = static_cast<int>(std::lround(cy + dy * t));
-				if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1)
+			int best_dist = search + 1;
+			for (int t = t0; t <= t1; t++) {
+				const int m = mag_at(cx, cy, dx, dy, t);
+				if (m < local_thresh)
 					continue;
-				const int m = static_cast<int>(mag[static_cast<size_t>(y) * width + x]);
-				const double fall = 1.0 - 0.8 * std::abs(t - exit_t) / static_cast<double>(search);
-				const double score = m * fall;
-				if (score > best_score) {
-					best_score = score;
+				const int ml = mag_at(cx, cy, dx, dy, t - 1);
+				const int mr = mag_at(cx, cy, dx, dy, t + 1);
+				if (m < ml || m < mr)
+					continue;
+				const int dist = std::abs(t - exit_t);
+				if (dist < best_dist) {
+					best_dist = dist;
 					best_t = t;
 				}
 			}
-			if (best_score < thresh)
-				best_t = exit_t;
 			poly.push_back({static_cast<float>(cx + dx * best_t), static_cast<float>(cy + dy * best_t)});
 		}
 		if (poly.size() < 8)
 			continue;
-		mask_fill_polygon(out, width, height, poly);
+
+		std::vector<MaskPoint> smooth = poly;
+		const int pn = static_cast<int>(poly.size());
+		const int wr = 3;
+		for (int i = 0; i < pn; i++) {
+			float px = 0, py = 0;
+			for (int k = -wr; k <= wr; k++) {
+				const MaskPoint &p = poly[static_cast<size_t>((i + k + pn * 8) % pn)];
+				px += p.x;
+				py += p.y;
+			}
+			smooth[static_cast<size_t>(i)] = {px / static_cast<float>(wr * 2 + 1),
+							  py / static_cast<float>(wr * 2 + 1)};
+		}
+		mask_fill_polygon(out, width, height, smooth);
 		any = true;
 	}
 
@@ -524,7 +502,6 @@ bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t
 		out.clear();
 		return false;
 	}
-	mask_feather_inward(out, width, height, 3);
 	return true;
 }
 

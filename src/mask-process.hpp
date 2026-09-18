@@ -52,8 +52,9 @@ int mask_sobel(const std::vector<uint8_t> &lum, int width, int height, std::vect
 MaskCrop mask_crop_from_opaque(const std::vector<uint8_t> &gray, int width, int height, uint8_t threshold = 20,
 			       int pad = 32);
 
-/* Snap painted pixels (>= 40) onto nearby luma edges. Writes 0/255 (+ a 3px
- * inward feather) into `out`. Returns false if there is not enough paint. */
+/* Snap painted pixels (>= 40) onto nearby luma edges. Writes a hard 0/255
+ * fill. Prefers the nearest strong edge to the paint boundary so inner art
+ * does not pull the mask in. Returns false if there is not enough paint. */
 bool mask_snap_edges(const std::vector<uint8_t> &user, const std::vector<uint8_t> &lum, int width, int height,
 		     int search, std::vector<uint8_t> &out);
 

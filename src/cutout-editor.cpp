@@ -447,7 +447,7 @@ public:
 		for (int y = 0; y < h; y++)
 			memcpy(user.data() + static_cast<size_t>(y) * w, mask.constScanLine(y), static_cast<size_t>(w));
 		std::vector<uint8_t> out;
-		const int search = std::max(4, std::min(8, brush / 4));
+		const int search = std::max(12, std::min(40, brush));
 		if (!mask_snap_edges(user, frameLuma(), w, h, search, out))
 			return false;
 		pushUndo();
