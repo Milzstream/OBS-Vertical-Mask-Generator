@@ -71,6 +71,24 @@ std::string ref_path_for_mask(const std::string &mask_path)
 	return p;
 }
 
+std::string still_path_for_mask(const std::string &mask_path)
+{
+	if (mask_path.empty())
+		return {};
+	std::string p = mask_path;
+	bool png = false;
+	if (p.size() >= 4) {
+		const char *e = p.c_str() + p.size() - 4;
+		png = e[0] == '.' && (e[1] == 'p' || e[1] == 'P') && (e[2] == 'n' || e[2] == 'N') &&
+		      (e[3] == 'g' || e[3] == 'G');
+	}
+	if (png)
+		p.replace(p.size() - 4, 4, ".still.png");
+	else
+		p += ".still.png";
+	return p;
+}
+
 void destroy_job(Job *job)
 {
 	if (!job)
@@ -149,12 +167,11 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 
 	std::vector<uint8_t> ref_s;
 	mask_resize_luma(ctx->ref_luma, ctx->ref_w, ctx->ref_h, ref_s, rw, rh);
-	const int inset = std::max(1, std::min(rw, rh) / 12);
-	std::vector<uint8_t> band;
-	mask_presence_band(mask_s, &ref_s, rw, rh, inset, band);
+	std::vector<uint8_t> rim;
+	mask_presence_rim(mask_s, rw, rh, 2, rim);
 
 	float score = 0;
-	if (!mask_presence_match(ref_s, roi, band, rw, rh, 3, &score))
+	if (!mask_presence_match(ref_s, roi, rim, rw, rh, 3, &score))
 		return;
 	apply_score(ctx, score);
 }
@@ -320,6 +337,11 @@ void presence_tick(void *, float seconds)
 
 } // namespace
 
+std::string hud_mask_presence_still_path(const std::string &mask_path)
+{
+	return still_path_for_mask(mask_path);
+}
+
 void hud_mask_presence_start(void)
 {
 	if (g_started)
@@ -374,6 +396,9 @@ void hud_mask_presence_clear_ref(hud_mask *ctx)
 		const std::string path = ref_path_for_mask(ctx->mask_path);
 		if (!path.empty())
 			os_unlink(path.c_str());
+		const std::string still = still_path_for_mask(ctx->mask_path);
+		if (!still.empty())
+			os_unlink(still.c_str());
 	}
 	ctx->ref_valid = false;
 	ctx->ref_capture_pending = false;

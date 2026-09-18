@@ -1158,7 +1158,8 @@ public:
 		root->addLayout(footer);
 		root->addLayout(tools);
 
-		startCapture(true, false);
+		if (!loadSavedStill())
+			startCapture(true, false);
 		canvas_->setFocus();
 	}
 
@@ -1247,6 +1248,23 @@ private:
 				delete job;
 			},
 			j, false);
+	}
+
+	bool loadSavedStill()
+	{
+		if (ctx_->mask_path.empty())
+			return false;
+		const std::string sp = hud_mask_presence_still_path(ctx_->mask_path);
+		if (sp.empty())
+			return false;
+		QImage still(QString::fromUtf8(sp.c_str()));
+		if (still.isNull())
+			return false;
+		canvas_->setFrame(still);
+		QImage existing(QString::fromUtf8(ctx_->mask_path.c_str()));
+		if (!existing.isNull())
+			canvas_->loadExistingMask(existing, ctx_->crop_left, ctx_->crop_top);
+		return true;
 	}
 
 	void startCapture(bool loadExisting, bool live)
@@ -1366,6 +1384,9 @@ private:
 			       static_cast<size_t>(cw));
 		ctx_->mask_path = full;
 		hud_mask_presence_save_ref(ctx_, luma.data(), crop_mask.data(), cw, ch);
+		const std::string still = hud_mask_presence_still_path(full);
+		if (!still.empty())
+			canvas_->frame.save(QString::fromUtf8(still.c_str()));
 
 		hud_mask_set_cutout(ctx_, full, left, top, right, bottom);
 		bfree(full);

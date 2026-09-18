@@ -910,6 +910,22 @@ static void mask_dilate1(std::vector<uint8_t> &img, int width, int height)
 	(void)n;
 }
 
+void mask_presence_rim(const std::vector<uint8_t> &mask, int width, int height, int thickness, std::vector<uint8_t> &rim)
+{
+	mask_blob_outline(mask, width, height, rim);
+	if (thickness < 1)
+		thickness = 1;
+	for (int i = 0; i < thickness; i++)
+		mask_dilate1(rim, width, height);
+	const int n = width * height;
+	if (static_cast<int>(mask.size()) < n)
+		return;
+	for (int i = 0; i < n; i++) {
+		if (mask[static_cast<size_t>(i)] < 20)
+			rim[static_cast<size_t>(i)] = 0;
+	}
+}
+
 static void mask_scale_about_centroid(const std::vector<uint8_t> &src, int width, int height, float scale,
 				      std::vector<uint8_t> &out)
 {

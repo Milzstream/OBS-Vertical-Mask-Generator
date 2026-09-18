@@ -735,6 +735,37 @@ int main()
 		CHECK(score < mask_presence_threshold(50));
 	}
 
+	/* Rim is the slot border. Next-round interior/floor changes should still match. */
+	{
+		const int w = 48, h = 48;
+		auto mask = filled_square(w, h, 8, 8, 39, 39);
+		std::vector<uint8_t> rim;
+		mask_presence_rim(mask, w, h, 2, rim);
+		CHECK(rim[static_cast<size_t>(8) * w + 8] == 255);
+		CHECK(rim[static_cast<size_t>(24) * w + 24] == 0);
+
+		auto round1 = box_panel(w, h, 220, 90, 8, 8, 39, 39);
+		for (int y = 14; y <= 33; y++)
+			for (int x = 14; x <= 33; x++)
+				round1[static_cast<size_t>(y) * w + x] = 200;
+		auto round2 = box_panel(w, h, 200, 40, 8, 8, 39, 39);
+		for (int y = 14; y <= 33; y++)
+			for (int x = 14; x <= 33; x++)
+				round2[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(30 + ((x * 19 + y * 11) & 90));
+		float score = 0;
+		CHECK(mask_presence_match(round1, round2, rim, w, h, 3, &score));
+		CHECK(score > mask_presence_threshold(50));
+
+		std::vector<uint8_t> gone(static_cast<size_t>(w) * h);
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				gone[static_cast<size_t>(y) * w + x] =
+					static_cast<uint8_t>(60 + (x + y) * 80 / (w + h));
+		CHECK(mask_presence_match(round1, gone, rim, w, h, 3, &score));
+		CHECK(score < mask_presence_threshold(50));
+	}
+
 	if (g_fails) {
 		std::printf("%d check(s) failed\n", g_fails);
 		return 1;

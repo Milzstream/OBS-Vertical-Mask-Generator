@@ -69,6 +69,9 @@ bool mask_magic_shrinkwrap(const std::vector<MaskPoint> &loop, const std::vector
 void mask_presence_band(const std::vector<uint8_t> &mask, const std::vector<uint8_t> *luma, int width, int height,
 			int inset, std::vector<uint8_t> &band);
 
+/* Rim of the paint (outline grown inward). Interiors can change. */
+void mask_presence_rim(const std::vector<uint8_t> &mask, int width, int height, int thickness, std::vector<uint8_t> &rim);
+
 void mask_resize_luma(const std::vector<uint8_t> &src, int src_w, int src_h, std::vector<uint8_t> &dst, int dst_w,
 		      int dst_h);
 
