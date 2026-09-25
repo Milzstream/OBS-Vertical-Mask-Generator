@@ -45,13 +45,13 @@ cmake --preset windows-x64
 cmake --build --preset windows-x64
 ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
 
-Magic Select's element picker needs a local model (not committed). Fetch it once, then rebuild:
+Magic Select's element picker needs ONNX Runtime next to the plugin. The models ship in `data/models/`. Fetch the DLL once, then rebuild:
 
 ```
 powershell -File .github/scripts/Fetch-MobileSAM.ps1
 ```
 
-That places the ONNX files under `data/models/` and `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies the DLL next to the plugin. Reconfigure before packaging an installer so the DLL is included. Without the model, Magic Select still works and uses the edge snap.
+That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin. Reconfigure before packaging an installer so the DLL is included. Without the DLL, Magic Select still works and uses the edge snap.
 ```
 
 Tag `x.y.z` (for example `0.1.0`) on `main` to publish a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.

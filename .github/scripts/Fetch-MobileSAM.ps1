@@ -1,21 +1,11 @@
-# Downloads MobileSAM ONNX weights and onnxruntime.dll for Magic Select.
-# Weights are not committed. Reconfigure after this so the installer can copy the DLL.
+# Downloads onnxruntime.dll for Magic Select.
+# The ONNX models ship in data/models. Reconfigure after this so the installer can copy the DLL.
 # A normal rebuild copies the DLL into the rundir either way.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$models = Join-Path $root "data\models"
 $ortDir = Join-Path $root "third_party\onnxruntime"
-New-Item -ItemType Directory -Force -Path $models, $ortDir | Out-Null
-
-$enc = Join-Path $models "mobilesam.encoder.onnx"
-$dec = Join-Path $models "mobilesam.decoder.onnx"
-if (-not (Test-Path -LiteralPath $enc)) {
-    Invoke-WebRequest -Uri "https://huggingface.co/PulpCut/mobilesam-onnx/resolve/main/mobilesam.encoder.onnx" -OutFile $enc
-}
-if (-not (Test-Path -LiteralPath $dec)) {
-    Invoke-WebRequest -Uri "https://huggingface.co/PulpCut/mobilesam-onnx/resolve/main/mobilesam.decoder.onnx" -OutFile $dec
-}
+New-Item -ItemType Directory -Force -Path $ortDir | Out-Null
 
 $dll = Join-Path $ortDir "onnxruntime.dll"
 if (-not (Test-Path -LiteralPath $dll)) {
@@ -31,6 +21,5 @@ if (-not (Test-Path -LiteralPath $dll)) {
     Copy-Item (Join-Path $extract "lib\onnxruntime.dll") -Destination $dll
 }
 
-Write-Host "MobileSAM models: $models"
 Write-Host "ONNX Runtime: $dll"
 Write-Host "CPU build. A DirectML onnxruntime.dll dropped in the same folder is used automatically if it exports the DML provider."

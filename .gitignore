@@ -41,4 +41,6 @@
 
 # MobileSAM weights and ONNX Runtime binaries (fetched, not vendored)
 /data/models/*.onnx
+!/data/models/mobilesam.encoder.onnx
+!/data/models/mobilesam.decoder.onnx
 /third_party/onnxruntime/*.dll
