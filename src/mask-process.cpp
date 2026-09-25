@@ -309,7 +309,7 @@ MaskCrop mask_crop_from_opaque(const std::vector<uint8_t> &gray, int width, int 
 	return c;
 }
 
-static void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height, const std::vector<MaskPoint> &poly)
+void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height, const std::vector<MaskPoint> &poly)
 {
 	const int n = static_cast<int>(poly.size());
 	if (n < 3 || width <= 0 || height <= 0)
@@ -1141,5 +1141,103 @@ bool mask_presence_outline_score(const std::vector<uint8_t> &mask, const std::ve
 			best = hit;
 	}
 	*score = best;
+	return true;
+}
+
+MaskLoopBounds mask_loop_bounds(const std::vector<MaskPoint> &loop, int frame_w, int frame_h, int pad)
+{
+	MaskLoopBounds b;
+	if (loop.size() < 3 || frame_w < 1 || frame_h < 1)
+		return b;
+	if (pad < 0)
+		pad = 0;
+	float min_x = loop[0].x;
+	float min_y = loop[0].y;
+	float max_x = loop[0].x;
+	float max_y = loop[0].y;
+	for (const MaskPoint &pt : loop) {
+		min_x = std::min(min_x, pt.x);
+		min_y = std::min(min_y, pt.y);
+		max_x = std::max(max_x, pt.x);
+		max_y = std::max(max_y, pt.y);
+	}
+	int x0 = static_cast<int>(std::floor(min_x)) - pad;
+	int y0 = static_cast<int>(std::floor(min_y)) - pad;
+	int x1 = static_cast<int>(std::ceil(max_x)) + pad;
+	int y1 = static_cast<int>(std::ceil(max_y)) + pad;
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > frame_w - 1)
+		x1 = frame_w - 1;
+	if (y1 > frame_h - 1)
+		y1 = frame_h - 1;
+	if (x1 < x0 || y1 < y0)
+		return b;
+	b.x = x0;
+	b.y = y0;
+	b.width = x1 - x0 + 1;
+	b.height = y1 - y0 + 1;
+	b.empty = b.width < 1 || b.height < 1;
+	return b;
+}
+
+void mask_sam_box_to_input(float x0, float y0, float x1, float y1, int crop_w, int crop_h, float out_xyxy[4])
+{
+	const float longest = static_cast<float>(std::max(crop_w, crop_h));
+	const float scale = longest > 0.f ? 1024.f / longest : 1.f;
+	out_xyxy[0] = x0 * scale;
+	out_xyxy[1] = y0 * scale;
+	out_xyxy[2] = x1 * scale;
+	out_xyxy[3] = y1 * scale;
+}
+
+bool mask_point_in_loop(float x, float y, const std::vector<MaskPoint> &loop)
+{
+	if (loop.size() < 3)
+		return false;
+	bool inside = false;
+	for (size_t i = 0, j = loop.size() - 1; i < loop.size(); j = i++) {
+		const float yi = loop[i].y;
+		const float yj = loop[j].y;
+		const float xi = loop[i].x;
+		const float xj = loop[j].x;
+		if ((yi > y) == (yj > y))
+			continue;
+		const float dy = yj - yi;
+		if (dy == 0.f)
+			continue;
+		if (x < (xj - xi) * (y - yi) / dy + xi)
+			inside = !inside;
+	}
+	return inside;
+}
+
+void mask_clip_to_loop(std::vector<uint8_t> &gray, int width, int height, const std::vector<MaskPoint> &loop)
+{
+	if (width < 1 || height < 1 || static_cast<int>(gray.size()) < width * height)
+		return;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			const size_t i = static_cast<size_t>(y) * width + x;
+			if (gray[i] < 128)
+				continue;
+			if (!mask_point_in_loop(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, loop))
+				gray[i] = 0;
+		}
+	}
+}
+
+bool mask_magic_pick_ok(int mask_pixels, int crop_pixels, float iou)
+{
+	if (crop_pixels <= 0 || mask_pixels < 16)
+		return false;
+	if (!(iou >= 0.45f))
+		return false;
+	if (mask_pixels > static_cast<int>(0.97f * static_cast<float>(crop_pixels)))
+		return false;
+	if (mask_pixels * 1000 < crop_pixels * 4)
+		return false;
 	return true;
 }

@@ -10,6 +10,7 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include "cutout-editor.hpp"
 #include "hud-mask.hpp"
+#include "magic-sam.hpp"
 #include "mask-process.hpp"
 #include "presence.hpp"
 
@@ -49,6 +50,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -264,6 +266,33 @@ QCursor make_bucket_cursor()
 	return QCursor(pm, 3, 20);
 }
 
+MagicSamPick shrinkwrap_fallback(const uint8_t *bgra, int stride, int w, int h, const std::vector<MaskPoint> &loop)
+{
+	MagicSamPick pick;
+	pick.width = w;
+	pick.height = h;
+	pick.used_fallback = true;
+	std::vector<uint8_t> lum(static_cast<size_t>(w) * h);
+	for (int y = 0; y < h; y++) {
+		const uint8_t *row = bgra + static_cast<size_t>(y) * stride;
+		for (int x = 0; x < w; x++) {
+			const int b = row[x * 4 + 0];
+			const int g = row[x * 4 + 1];
+			const int r = row[x * 4 + 2];
+			lum[static_cast<size_t>(y) * w + x] = static_cast<uint8_t>((77 * r + 150 * g + 29 * b) >> 8);
+		}
+	}
+	std::vector<MaskPoint> snapped;
+	if (!mask_magic_shrinkwrap(loop, lum, w, h, 18, snapped)) {
+		pick.status = MagicSamStatus::Rejected;
+		return pick;
+	}
+	pick.gray.assign(static_cast<size_t>(w) * h, 0);
+	mask_fill_polygon(pick.gray, w, h, snapped);
+	pick.status = MagicSamStatus::Ok;
+	return pick;
+}
+
 class MaskCanvas : public QWidget {
 public:
 	QImage frame;
@@ -296,6 +325,7 @@ public:
 		cancelLineDrag();
 		magicPath_.clear();
 		magicDragging_ = false;
+		magicMissed_ = false;
 		tool = t;
 		updateCursor();
 		if (toolChanged)
@@ -332,6 +362,10 @@ public:
 	std::function<void()> brushChanged;
 	std::function<void()> undoChanged;
 	std::function<void()> toolChanged;
+	std::function<void()> magicStateChanged;
+
+	bool magicBusy() const { return magicBusy_; }
+	bool magicMissed() const { return magicMissed_; }
 
 	void setFrame(const QImage &img)
 	{
@@ -835,6 +869,9 @@ private:
 			return;
 		}
 		if (tool == EditorTool::Magic) {
+			if (magicBusy_)
+				return;
+			magicMissed_ = false;
 			magicPath_.clear();
 			magicPath_ << src;
 			magicDragging_ = true;
@@ -930,25 +967,65 @@ private:
 
 	void applyMagic()
 	{
-		if (frame.isNull() || mask.isNull() || magicPath_.size() < 8)
+		if (magicBusy_ || frame.isNull() || mask.isNull() || magicPath_.size() < 8)
+			return;
+		if (frame.format() != QImage::Format_ARGB32 || frame.bytesPerLine() < frame.width() * 4)
 			return;
 		std::vector<MaskPoint> loop;
 		loop.reserve(static_cast<size_t>(magicPath_.size()));
 		for (const QPointF &pt : magicPath_)
 			loop.push_back({static_cast<float>(pt.x()), static_cast<float>(pt.y())});
-		std::vector<MaskPoint> snapped;
-		if (!mask_magic_shrinkwrap(loop, frameLuma(), mask.width(), mask.height(), 18, snapped))
-			return;
-		QPolygonF poly;
-		poly.reserve(static_cast<int>(snapped.size()));
-		for (const MaskPoint &pt : snapped)
-			poly << QPointF(pt.x, pt.y);
-		pushUndo();
-		QPainter p(&mask);
-		p.setRenderHint(QPainter::Antialiasing, true);
-		p.setPen(Qt::NoPen);
-		p.setBrush(Qt::white);
-		p.drawPolygon(poly);
+		const int w = frame.width();
+		const int h = frame.height();
+		const int stride = frame.bytesPerLine();
+		std::vector<uint8_t> bgra(static_cast<size_t>(stride) * h);
+		std::memcpy(bgra.data(), frame.constBits(), bgra.size());
+		magicMissed_ = false;
+		magicBusy_ = true;
+		setCursor(Qt::BusyCursor);
+		const uint64_t gen = ++magicGen_;
+		if (magicStateChanged)
+			magicStateChanged();
+		QPointer<MaskCanvas> self(this);
+		std::thread([self, bgra = std::move(bgra), stride, w, h, loop = std::move(loop), gen]() mutable {
+			MagicSamPick pick = magic_sam_select(bgra.data(), stride, w, h, loop);
+			if (pick.status == MagicSamStatus::Unavailable)
+				pick = shrinkwrap_fallback(bgra.data(), stride, w, h, loop);
+			if (!self)
+				return;
+			QMetaObject::invokeMethod(
+				self.data(),
+				[self, pick = std::move(pick), gen]() mutable {
+					if (!self || self->magicGen_ != gen)
+						return;
+					self->finishMagic(std::move(pick));
+				},
+				Qt::QueuedConnection);
+		}).detach();
+	}
+
+	void finishMagic(MagicSamPick pick)
+	{
+		magicBusy_ = false;
+		updateCursor();
+		if (pick.status == MagicSamStatus::Ok && pick.width == mask.width() && pick.height == mask.height() &&
+		    static_cast<int>(pick.gray.size()) >= pick.width * pick.height) {
+			if (pick.used_fallback)
+				obs_log(LOG_INFO, "Magic Select used edge snap (MobileSAM model not installed)");
+			pushUndo();
+			for (int y = 0; y < pick.height; y++) {
+				uint8_t *row = mask.scanLine(y);
+				const uint8_t *src = pick.gray.data() + static_cast<size_t>(y) * pick.width;
+				for (int x = 0; x < pick.width; x++) {
+					if (src[x] >= 128)
+						row[x] = 255;
+				}
+			}
+		} else if (pick.status != MagicSamStatus::Ok) {
+			magicMissed_ = true;
+		}
+		if (magicStateChanged)
+			magicStateChanged();
 		update();
 	}
 
@@ -970,6 +1047,9 @@ private:
 	QPolygonF linePts_;
 	QPolygonF lineFreehand_;
 	bool magicDragging_ = false;
+	bool magicBusy_ = false;
+	bool magicMissed_ = false;
+	uint64_t magicGen_ = 0;
 	QPolygonF magicPath_;
 	QPolygonF closedPoly_;
 	QCursor fillCursor_ = make_bucket_cursor();
@@ -1074,6 +1154,14 @@ public:
 			brushLabel->setEnabled(sizeOn);
 		};
 		applyMode();
+		canvas_->magicStateChanged = [this, hintTool, applyMode]() {
+			if (canvas_->magicBusy())
+				hintTool->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.MagicBusy")));
+			else if (canvas_->magicMissed())
+				hintTool->setText(QString::fromUtf8(obs_module_text("HUDMask.Editor.MagicMissed")));
+			else
+				applyMode();
+		};
 
 		connect(maskBrush, &QPushButton::clicked, this, [this, applyMode]() {
 			canvas_->erase = false;

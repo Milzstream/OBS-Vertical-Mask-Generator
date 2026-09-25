@@ -12,6 +12,7 @@
 !/docs
 !/src
 !/tests
+!/SAMHUDTraining
 !.clang-format
 !.gersemirc
 !.gitignore
@@ -24,6 +25,9 @@
 # Docs and planning
 !/docs/**
 !/tests/**
+!/SAMHUDTraining/**
+/SAMHUDTraining/weights/
+/SAMHUDTraining/**/__pycache__/
 !/.github/**
 
 # Exclude lock files
@@ -34,3 +38,7 @@
 
 # Exclude CMake build number cache
 /cmake/.CMakeBuildNumber
+
+# MobileSAM weights and ONNX Runtime binaries (fetched, not vendored)
+/data/models/*.onnx
+/third_party/onnxruntime/*.dll

@@ -113,3 +113,29 @@ struct MaskPresenceGate {
 /* Hide/show with a deadband around the match line and a streak before flipping.
  * Returns true when shown changed. hysteresis < 1 is treated as 1. */
 bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, int hysteresis = 3);
+
+/* Axis-aligned bounds of a loop, padded and clamped to the frame. empty if the
+ * loop is shorter than 3 points or the clamped rect is empty. */
+struct MaskLoopBounds {
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+	bool empty = true;
+};
+
+MaskLoopBounds mask_loop_bounds(const std::vector<MaskPoint> &loop, int frame_w, int frame_h, int pad);
+
+/* Map a box in crop pixels into the 1024-long-side space MobileSAM's decoder expects. */
+void mask_sam_box_to_input(float x0, float y0, float x1, float y1, int crop_w, int crop_h, float out_xyxy[4]);
+
+bool mask_point_in_loop(float x, float y, const std::vector<MaskPoint> &loop);
+
+/* Zero pixels whose center is outside the loop. */
+void mask_clip_to_loop(std::vector<uint8_t> &gray, int width, int height, const std::vector<MaskPoint> &loop);
+
+/* Even-odd fill into an existing buffer. Does not clear pixels outside the polygon. */
+void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height, const std::vector<MaskPoint> &loop);
+
+/* Reject a prompted pick that is unsure, a sliver, or the whole crop. */
+bool mask_magic_pick_ok(int mask_pixels, int crop_pixels, float iou);
