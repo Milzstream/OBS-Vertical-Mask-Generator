@@ -27,7 +27,7 @@ The installer writes only under ProgramData. On later launches, HUD Mask checks 
    - **Mask Brush** / **Erase Brush**, then Circle or Square. Wheel or the Size slider sets the brush. Size is only for those two shapes.
    - **Line** — hold to place, pause to straighten, click near the start or press Enter to close.
    - **Fill** — click inside an outline (any brush or a closed line).
-   - **Magic Select** — draw a rough loop around the object and release.
+   - **Magic Select** — draw a rough loop around the element and release. If the MobileSAM model is installed it picks the element inside the loop. Otherwise it falls back to the old edge snap.
    - **Snap Edges** pulls a painted silhouette onto nearby contrast in the frame.
    - Ctrl+wheel or the zoom slider to zoom, Ctrl+0 for 100%. Space or middle-mouse to pan. Pause/Play freezes or resumes the live frame. Undo, Refresh, Clear, then **Apply**.
 5. Place and scale the scene item. The plugin does not auto-layout the canvas.
@@ -44,6 +44,14 @@ Visual Studio 2022, CMake 3.28+, and a network connection the first time (the OB
 cmake --preset windows-x64
 cmake --build --preset windows-x64
 ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
+
+Magic Select's element picker needs ONNX Runtime next to the plugin. The models ship in `data/models/`. Fetch the DLL once, then rebuild:
+
+```
+powershell -File .github/scripts/Fetch-MobileSAM.ps1
+```
+
+That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin. Reconfigure before packaging an installer so the DLL is included. Without the DLL, Magic Select still works and uses the edge snap.
 ```
 
 Tag `x.y.z` (for example `0.1.0`) on `main` to publish a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.

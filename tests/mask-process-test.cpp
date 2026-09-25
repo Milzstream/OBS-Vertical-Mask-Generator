@@ -766,6 +766,40 @@ int main()
 		CHECK(score < mask_presence_threshold(50));
 	}
 
+	{
+		std::vector<MaskPoint> loop = {{10, 10}, {50, 12}, {48, 40}, {12, 38}};
+		const MaskLoopBounds b = mask_loop_bounds(loop, 100, 80, 4);
+		CHECK(!b.empty);
+		CHECK(b.x == 6);
+		CHECK(b.y == 6);
+		CHECK(b.width == 49);
+		CHECK(b.height == 39);
+
+		const MaskLoopBounds clamped = mask_loop_bounds(loop, 52, 42, 32);
+		CHECK(clamped.x == 0);
+		CHECK(clamped.y == 0);
+		CHECK(clamped.width == 52);
+		CHECK(clamped.height == 42);
+
+		CHECK(mask_point_in_loop(30, 25, loop));
+		CHECK(!mask_point_in_loop(2, 2, loop));
+
+		std::vector<uint8_t> gray(100 * 80, 255);
+		mask_clip_to_loop(gray, 100, 80, loop);
+		CHECK(gray[25 * 100 + 30] == 255);
+		CHECK(gray[2 * 100 + 2] == 0);
+
+		float box[4];
+		mask_sam_box_to_input(10, 20, 40, 30, 100, 50, box);
+		CHECK(std::fabs(box[0] - 102.4f) < 0.01f);
+		CHECK(std::fabs(box[1] - 204.8f) < 0.01f);
+
+		CHECK(!mask_magic_pick_ok(100, 10000, 0.2f));
+		CHECK(!mask_magic_pick_ok(8, 10000, 0.9f));
+		CHECK(!mask_magic_pick_ok(9900, 10000, 0.9f));
+		CHECK(mask_magic_pick_ok(2000, 10000, 0.8f));
+	}
+
 	if (g_fails) {
 		std::printf("%d check(s) failed\n", g_fails);
 		return 1;

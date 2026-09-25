@@ -43,6 +43,8 @@ target_sources(
           src/cutout-editor.hpp
           src/mask-process.cpp
           src/mask-process.hpp
+          src/magic-sam.cpp
+          src/magic-sam.hpp
           src/presence.cpp
           src/presence.hpp
           src/update-check.cpp
@@ -58,6 +60,26 @@ if(OS_WINDOWS)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+add_custom_command(
+  TARGET ${CMAKE_PROJECT_NAME}
+  POST_BUILD
+  COMMAND
+    "${CMAKE_COMMAND}" "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime"
+    "-DDST=${CMAKE_CURRENT_BINARY_DIR}/rundir/$<CONFIG>" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy-ort.cmake"
+  VERBATIM
+)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
+  install(
+    DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/"
+    DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit"
+    FILES_MATCHING
+    PATTERN "*.dll"
+  )
+endif()
 
 option(ENABLE_TESTS "Build unit tests" ON)
 if(ENABLE_TESTS)
