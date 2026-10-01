@@ -16,6 +16,8 @@ Requires OBS Studio 32+ on Windows 10/11 x64. Close OBS first.
    Or unzip the portable zip and copy the `vertical-hud-mask` folder into `%ProgramData%\obs-studio\plugins\`.
 3. Start OBS → **Add Source → HUD Mask**.
 
+   ![HUD Mask in the Add Source menu](docs/images/add-source.png)
+
 The installer writes only under ProgramData. On later launches, HUD Mask checks GitHub for a newer release and can open the download. Close OBS before running a new installer.
 
 ## Use
@@ -23,6 +25,9 @@ The installer writes only under ProgramData. On later launches, HUD Mask checks 
 1. Add a **HUD Mask** source.
 2. Set **Type** to Source or Scene. For a scene, pick the **Canvas** first (main or an extra canvas such as Aitum Vertical), then the scene.
 3. Pick the source or scene to sample. **Same Masks** lists other HUD Masks already aimed at that target.
+
+   ![Properties for a scene target. Same Masks lists the other cut-outs aimed at that scene, including HUD Mask 2.](docs/images/properties-same-masks.png)
+
 4. **Draw mask…**
    - **Mask Brush** / **Erase Brush**, then Circle or Square. Wheel or the Size slider sets the brush. Size is only for those two shapes.
    - **Line** — hold to place, pause to straighten, click near the start or press Enter to close.
@@ -30,11 +35,18 @@ The installer writes only under ProgramData. On later launches, HUD Mask checks 
    - **Magic Select** — draw a rough loop around the element and release. If the MobileSAM model is installed it picks the element inside the loop. Otherwise it falls back to the old edge snap.
    - **Snap Edges** pulls a painted silhouette onto nearby contrast in the frame.
    - Ctrl+wheel or the zoom slider to zoom, Ctrl+0 for 100%. Space or middle-mouse to pan. Pause/Play freezes or resumes the live frame. Undo, Refresh, Clear, then **Apply**.
+
+   ![Draw mask with the circle brush. Snap Edges, undo, refresh, and apply are on the tool row.](docs/images/draw-mask-brush.png)
+
+   ![Magic Select. Draw a rough loop around the element and release.](docs/images/draw-mask-magic.png)
+
 5. Place and scale the scene item. The plugin does not auto-layout the canvas.
 
 **Expand** and **Feather** on the properties pane are available after a mask exists.
 
 **Auto-hide** (off by default) makes the cut-out transparent when that HUD outline is gone, so loading screens and menus do not show through the hole. **Experimental:** it compares edges in the live frame, not the recorded outline placement, so unrelated scenery (cutscenes, menus) can still flicker it on and off. Draw the mask while the HUD is visible — that still is the outline reference. It does not click the OBS eyeball; a hidden scene item is skipped. **Fade** (0 ms is instant) and **Match** (how picky the outline compare is) are next to the checkbox. If it hides while the HUD is still on screen, open Draw mask, show the HUD, Refresh, then Apply.
+
+![Properties with Fade set to 900 ms, under Auto-hide.](docs/images/properties-scene.png)
 
 ## Build from source
 
