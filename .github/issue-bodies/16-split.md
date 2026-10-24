@@ -6,7 +6,7 @@ v1 (setup UX; no runtime cost)
 
 If cleanup finds multiple islands (e.g. three ability circles), the editor offers **Split into N sources**.
 
-One click creates N HUD Mask sources (same sampled target, one island each), places them so the composite still lines up on the canvas, and removes the original combined source. The user does not highlight the bar three times.
+One click creates N Source Cutout sources (same sampled target, one island each), places them so the composite still lines up on the canvas, and removes the original combined source. The user does not highlight the bar three times.
 
 Each resulting source can hide, move, and scale independently when kits differ.
 

@@ -4,7 +4,7 @@ MVP
 
 ## Goal
 
-HUD Mask samples **any** other OBS source, draws only the cut-out (mask + crop), outputs alpha. The mask/crop come from the highlighter editor (#10), not from a Photoshop file.
+Source Cutout samples **any** other OBS source, draws only the cut-out (mask + crop), outputs alpha. The mask/crop come from the highlighter editor (#10), not from a Photoshop file.
 
 ## In scope
 
@@ -25,5 +25,5 @@ HUD Mask samples **any** other OBS source, draws only the cut-out (mask + crop),
 
 - [ ] Three instances can reconstruct a WoW-style vertical layout (meter, minimap, action bar) **if** masks are provided by the editor
 - [ ] Same for NTE radar + abilities as a second test case
-- [ ] Works when HUD Mask sits on the main canvas too (not only vertical)
+- [ ] Works when Source Cutout sits on the main canvas too (not only vertical)
 - [ ] SDR first; no crash on missing source

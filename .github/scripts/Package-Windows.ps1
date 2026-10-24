@@ -28,7 +28,7 @@ if ( $PSVersionTable.PSVersion -lt '7.2.0' ) {
 
 function Get-IsccPath {
     # Prefer the real compiler. The Chocolatey `iscc` shim re-parses the
-    # command line and treats a define like /DMyAppName="HUD Mask" as two scripts.
+    # command line and treats a define like /DMyAppName="Source Cutout" as two scripts.
     $candidates = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
@@ -79,7 +79,11 @@ function Package {
     $Author = $BuildSpec.author
     $Website = $BuildSpec.website
 
-    $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
+    $InstallerName = ($DisplayName.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ([string]::IsNullOrWhiteSpace($InstallerName)) {
+        $InstallerName = $ProductName
+    }
+    $OutputName = "${InstallerName}-${ProductVersion}-windows-${Target}"
     $ReleaseDir = "${ProjectRoot}/release"
     $PluginDir = "${ReleaseDir}/${Configuration}/${ProductName}"
 
@@ -88,6 +92,8 @@ function Package {
         Path = @(
             "${ReleaseDir}/${ProductName}-*-windows-*.zip"
             "${ReleaseDir}/${ProductName}-*-windows-*.exe"
+            "${ReleaseDir}/${InstallerName}-*-windows-*.zip"
+            "${ReleaseDir}/${InstallerName}-*-windows-*.exe"
             "${ReleaseDir}/${ProductName}-*-source.zip"
         )
     }

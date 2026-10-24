@@ -14,7 +14,7 @@ That was the original “I imagine something along the lines of selecting a sour
 
 Unsupervised full-frame HUD discovery across arbitrary games is a research problem (menus are 100% UI, diegetic holograms, translucent chrome, resolution/HUD-scale settings). We should **not** schedule it as a feature until:
 
-1. HUD Mask source + PNG parity ships
+1. Source Cutout source + PNG parity ships
 2. Presence works on NTE
 3. Mark-and-snap works
 4. Movement-proposal has been spiked

@@ -12,4 +12,4 @@ Masks are authored at **crop size**, not full frame. White = keep, black = disca
 
 That stack works when the HUD is present and matches the PNG. It punches holes of world/background through the overlay when the HUD is missing, and it does not adapt when a kit shows fewer slots than the PNG was drawn for.
 
-HUD Mask is meant to replace the clone + crop + PNG + manual hide chain. Existing PNG files are a visual reference for feathered cut-outs, not an import requirement.
+Source Cutout is meant to replace the clone + crop + PNG + manual hide chain. Existing PNG files are a visual reference for feathered cut-outs, not an import requirement.

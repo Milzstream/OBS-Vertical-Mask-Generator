@@ -8,12 +8,12 @@ Each game is a bundle of slots (NTE = radar + abilities + level bar) with crops 
 
 ## Goal
 
-A JSON game profile that can stamp settings onto HUD Mask sources. Schema already lives in `profiles/schema.json`.
+A JSON game profile that can stamp settings onto Source Cutout sources. Schema already lives in `profiles/schema.json`.
 
 ## In scope
 
 - Load a profile from disk
-- Create or update HUD Mask sources for each slot (or dump settings the user applies)
+- Create or update Source Cutout sources for each slot (or dump settings the user applies)
 - First packed example: NTE (radar, abilities, level bar) using **paths** to the existing OneDrive PNGs, not the binaries in git
 - `schemaVersion: 1`
 

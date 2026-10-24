@@ -10,8 +10,8 @@ Also required: the same source works on a **vanilla** OBS scene (no Stream Suite
 
 ## In scope
 
-- Manual test: HUD Mask on AITUM VERTICAL, target = main Game Capture
-- Manual test: HUD Mask on MAIN CANVAS, target = another source in the same scene
+- Manual test: Source Cutout on AITUM VERTICAL, target = main Game Capture
+- Manual test: Source Cutout on MAIN CANVAS, target = another source in the same scene
 - Transform, hide, copy, scene collection switch
 - Notes on extra-canvas sampling quirks
 

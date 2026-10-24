@@ -13,7 +13,7 @@ Today that means source clone + crop filter + a handmade black-and-white PNG + I
 
 ## Product
 
-A new OBS source, **HUD Mask**.
+A new OBS source, **Source Cutout**.
 
 It samples any other source, lets the user highlight an element on a live view, turns that highlight into a cropped alpha cut-out, and is placed like any scene item.
 
@@ -23,13 +23,13 @@ Optional **auto-hide** makes the cut-out transparent when that element’s outli
 
 ## Setup
 
-1. Add HUD Mask on any scene.
+1. Add Source Cutout on any scene.
 2. Choose the source (or scene + canvas) to sample.
 3. Highlight the element (rough is enough): paint, line, fill, or Magic Select.
 4. Snap Edges if you want the paint pulled onto chrome. Apply crops to the mask.
 5. Drag and scale the item.
 
-One instance is one cut-out. Use more HUD Masks for more elements (**Same Masks** lists the others on that target).
+One instance is one cut-out. Use more Source Cutouts for more elements (**Same Masks** lists the others on that target).
 
 ## Runtime
 

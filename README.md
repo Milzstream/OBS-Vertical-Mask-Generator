@@ -1,4 +1,4 @@
-# HUD Mask
+# Source Cutout
 
 An [OBS Studio](https://obsproject.com/) plugin that cuts a piece out of any source so you can place and scale it on its own.
 
@@ -11,22 +11,22 @@ Free software (GPL-2.0-or-later). **Windows only** for now.
 Requires OBS Studio 33+ on Windows 10/11 x64. OBS 32 will not load this build. Close OBS first.
 
 1. Download the latest [release](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/releases).
-2. Run the installer (`vertical-hud-mask-<version>-windows-x64.exe`).
+2. Run the installer (`source-cutout-<version>-windows-x64.exe`).
 
    Or unzip the portable zip and copy the `vertical-hud-mask` folder into `%ProgramData%\obs-studio\plugins\`. Portable OBS uses the `plugins` folder next to `bin`, not `obs-plugins`. The DLL sits beside the `data` folder.
-3. Start OBS → **Add Source → HUD Mask**.
+3. Start OBS → **Add Source → Source Cutout**.
 
-   ![HUD Mask in the Add Source menu](docs/images/add-source.png)
+   ![Source Cutout in the Add Source menu](docs/images/add-source.png)
 
-The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\` and removes leftover copies from `C:\Program Files\obs-studio\` and from the old `bin\64bit` layout. A portable OBS copy in a custom folder is not removed. On later launches, HUD Mask checks GitHub for a newer release and can open the download. Close OBS before running a new installer.
+The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\` and removes leftover copies from `C:\Program Files\obs-studio\` and from the old `bin\64bit` layout. The folder and source id stay `vertical-hud-mask` so existing scenes and saved masks keep working. A portable OBS copy in a custom folder is not removed. On later launches, Source Cutout checks GitHub for a newer release and can download and start the installer. Close OBS before running a new installer.
 
 ## Use
 
-1. Add a **HUD Mask** source.
+1. Add a **Source Cutout** source.
 2. Set **Type** to Source or Scene. For a scene, pick the **Canvas** first (main or an extra canvas such as Aitum Vertical), then the scene.
-3. Pick the source or scene to sample. **Same Masks** lists other HUD Masks already aimed at that target.
+3. Pick the source or scene to sample. **Same Masks** lists other Source Cutouts already aimed at that target.
 
-   ![Properties for a scene target. Same Masks lists the other cut-outs aimed at that scene, including HUD Mask 2.](docs/images/properties-same-masks.png)
+   ![Properties for a scene target. Same Masks lists the other cut-outs aimed at that scene, including Source Cutout 2.](docs/images/properties-same-masks.png)
 
 4. **Draw mask…**
    - **Mask Brush** / **Erase Brush**, then Circle or Square. Wheel or the Size slider sets the brush. Size is only for those two shapes.

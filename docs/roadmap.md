@@ -32,7 +32,7 @@ Per-island hide inside one mask is a follow-up.
 - Auto-layout on the canvas
 - Auto-resize of islands when HUD chrome grows/shrinks
 - Shipping PNG files as the way to set up a game
-- Split into N sources (closed; use one HUD Mask per element)
+- Split into N sources (closed; use one Source Cutout per element)
 
 ## Issues
 
