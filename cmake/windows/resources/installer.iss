@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.2"
+#define MyAppVersion "0.5.3"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.5.2-windows-x64"
+#define OutputName "source-cutout-0.5.3-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -73,7 +73,52 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
+[Run]
+Filename: "{code:OBSLaunchPath}"; Description: "Launch OBS Studio"; Flags: nowait postinstall skipifsilent; Check: ShouldOfferOBSLaunch
+
 [Code]
+var
+  OBSExePath: String;
+
+function QueryProcessPath(const Name: String): String;
+var
+  Locator: Variant;
+  Service: Variant;
+  ResultSet: Variant;
+  Item: Variant;
+begin
+  Result := '';
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    ResultSet := Service.ExecQuery('SELECT ExecutablePath FROM Win32_Process WHERE Name="' + Name + '"');
+    if ResultSet.Count > 0 then
+    begin
+      Item := ResultSet.ItemIndex(0);
+      Result := Item.ExecutablePath;
+    end;
+  except
+    Result := '';
+  end;
+end;
+
+function OBSLaunchPath(Param: String): String;
+begin
+  if (OBSExePath <> '') and FileExists(OBSExePath) then
+    Result := OBSExePath
+  else
+  begin
+    Result := ExpandConstant('{autopf}\obs-studio\bin\64bit\obs64.exe');
+    if not FileExists(Result) then
+      Result := '';
+  end;
+end;
+
+function ShouldOfferOBSLaunch: Boolean;
+begin
+  Result := OBSLaunchPath('') <> '';
+end;
+
 function IsOBSRunning: Boolean;
 var
   Locator: Variant;
@@ -96,6 +141,9 @@ var
   Tries: Integer;
 begin
   Result := True;
+  OBSExePath := QueryProcessPath('obs64.exe');
+  if OBSExePath = '' then
+    OBSExePath := QueryProcessPath('obs32.exe');
   Tries := 0;
   while IsOBSRunning do
   begin
@@ -115,4 +163,16 @@ begin
       Exit;
     end;
   end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  Path: String;
+begin
+  if (CurStep <> ssPostInstall) or (not WizardSilent) then
+    Exit;
+  Path := OBSLaunchPath('');
+  if Path <> '' then
+    Exec(Path, '', ExtractFilePath(Path), SW_SHOWNORMAL, ewNoWait, ResultCode);
 end;
