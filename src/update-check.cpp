@@ -580,14 +580,7 @@ void update_check_worker()
 	if (g_cancel.load())
 		return;
 
-	obs_data_t *prior = load_state();
 	const int64_t now = static_cast<int64_t>(time(nullptr));
-	const int64_t last = obs_data_get_int(prior, "last_check");
-	obs_data_release(prior);
-	if (last > 0 && now - last < k_check_interval_sec) {
-		obs_log(LOG_INFO, "update check: skipped, last check within 24h");
-		return;
-	}
 
 	obs_log(LOG_INFO, "checking for updates (installed %s)", PLUGIN_VERSION);
 
