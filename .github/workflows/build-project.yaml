@@ -117,11 +117,25 @@ jobs:
           config: ${{ needs.check-event.outputs.config }}
           package: ${{ fromJSON(needs.check-event.outputs.package) }}
 
+      - name: Check Package Outputs 📦
+        shell: pwsh
+        run: |
+          $missing = @()
+          foreach ($filter in @('*-windows-x64.exe', '*-windows-x64.zip', '*-source.zip')) {
+            $found = @(Get-ChildItem -Path release -Filter $filter -File -ErrorAction SilentlyContinue)
+            if ($found.Count -eq 0) { $missing += $filter; continue }
+            $found | ForEach-Object { Write-Host $_.Name }
+          }
+          if ($missing.Count -gt 0) {
+            throw "Package outputs missing: $($missing -join ', ')"
+          }
+
       - name: Upload Artifacts 📡
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-${{ needs.check-event.outputs.commitHash }}
           if-no-files-found: error
           path: |
-            ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.*
-            ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-source.zip
+            ${{ github.workspace }}/release/*-windows-x64.exe
+            ${{ github.workspace }}/release/*-windows-x64.zip
+            ${{ github.workspace }}/release/*-source.zip
