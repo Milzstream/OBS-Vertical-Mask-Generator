@@ -47,6 +47,7 @@ function(set_target_properties_plugin target)
   endif()
 
   target_install_resources(${target})
+  target_install_manifest(${target})
 
   add_custom_command(
     TARGET ${target}

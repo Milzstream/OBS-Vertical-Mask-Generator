@@ -75,7 +75,7 @@ add_custom_command(
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
   install(
     DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/"
-    DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit"
+    DESTINATION "${CMAKE_PROJECT_NAME}"
     FILES_MATCHING
     PATTERN "*.dll"
   )
