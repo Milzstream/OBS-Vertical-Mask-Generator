@@ -8,17 +8,17 @@ Free software (GPL-2.0-or-later). **Windows only** for now.
 
 ## Install
 
-Requires OBS Studio 32+ on Windows 10/11 x64. Close OBS first.
+Requires OBS Studio 33+ on Windows 10/11 x64. OBS 32 will not load this build. Close OBS first.
 
 1. Download the latest [release](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/releases).
 2. Run the installer (`vertical-hud-mask-<version>-windows-x64.exe`).
 
-   Or unzip the portable zip and copy the `vertical-hud-mask` folder into `%ProgramData%\obs-studio\plugins\`.
+   Or unzip the portable zip and copy the `vertical-hud-mask` folder into `%ProgramData%\obs-studio\plugins\`. Portable OBS uses the `plugins` folder next to `bin`, not `obs-plugins`. The DLL sits beside the `data` folder.
 3. Start OBS → **Add Source → HUD Mask**.
 
    ![HUD Mask in the Add Source menu](docs/images/add-source.png)
 
-The installer writes only under ProgramData. On later launches, HUD Mask checks GitHub for a newer release and can open the download. Close OBS before running a new installer.
+The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\` and removes leftover copies from `C:\Program Files\obs-studio\` and from the old `bin\64bit` layout. A portable OBS copy in a custom folder is not removed. On later launches, HUD Mask checks GitHub for a newer release and can open the download. Close OBS before running a new installer.
 
 ## Use
 
@@ -66,7 +66,7 @@ powershell -File .github/scripts/Fetch-MobileSAM.ps1
 That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin. Reconfigure before packaging an installer so the DLL is included. Without the DLL, Magic Select still works and uses the edge snap.
 ```
 
-Tag `x.y.z` (for example `0.1.0`) on `main` to publish a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.
+Merging a version bump in `buildspec.json` to `main` tags that version and publishes a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.
 
 ## License
 

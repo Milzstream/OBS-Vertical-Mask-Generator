@@ -2,7 +2,7 @@
 #define MyAppName "HUD Mask"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.5.0"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "vertical-hud-mask-0.1.2-windows-x64"
+#define OutputName "vertical-hud-mask-0.5.0-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -59,9 +59,12 @@ VersionInfoDescription={#MyAppName} OBS plugin
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [InstallDelete]
-Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\vertical-hud-mask.dll"
-Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\vertical-hud-mask.pdb"
-Type: filesandordirs; Name: "{pf}\obs-studio\data\obs-plugins\vertical-hud-mask"
+Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\{#PluginName}.dll"
+Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\{#PluginName}.pdb"
+Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\onnxruntime.dll"
+Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\DirectML.dll"
+Type: filesandordirs; Name: "{pf}\obs-studio\data\obs-plugins\{#PluginName}"
+Type: filesandordirs; Name: "{commonappdata}\obs-studio\plugins\{#PluginName}\bin"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

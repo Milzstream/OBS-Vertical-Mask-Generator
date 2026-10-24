@@ -20,19 +20,43 @@ jobs:
 
   create-release:
     name: Create Release 🛫
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     needs: build-project
     defaults:
       run:
         shell: bash
     steps:
+      - name: Checkout 🛎️
+        if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@v4
+
       - name: Check Release Tag ☑️
         id: check
         run: |
           : Check Release Tag ☑️
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
           shopt -s extglob
+
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            version="$(jq -r '.version' buildspec.json)"
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo 'validTag=false' >> "$GITHUB_OUTPUT"
+              echo "Version '${version}' is not a release tag."
+              exit 0
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/${version}" >/dev/null 2>&1; then
+              echo 'validTag=false' >> "$GITHUB_OUTPUT"
+              echo "Tag ${version} already exists."
+              exit 0
+            fi
+            git tag "${version}"
+            git push origin "refs/tags/${version}"
+            echo 'validTag=true' >> "$GITHUB_OUTPUT"
+            echo 'prerelease=false' >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           case "${GITHUB_REF_NAME}" in
             +([0-9]).+([0-9]).+([0-9]) )
@@ -79,12 +103,14 @@ jobs:
             echo
             echo "Add **HUD Mask**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is optional and experimental."
             echo
-            echo "Close OBS before installing. If you previously copied files into \`C:\\Program Files\\obs-studio\\\`, remove those first so OBS does not load the plugin twice (see the README)."
+            echo "Requires OBS Studio 33 or newer. OBS 32 will not load this build. Close OBS before installing."
+            echo
+            echo "The plugin DLL sits next to the \`data\` folder. The installer removes leftover copies from \`C:\\Program Files\\obs-studio\\\` and from the old ProgramData \`bin\\64bit\` layout. A portable OBS copy in a custom folder is not removed."
             echo
             echo "## Downloads"
             echo
             echo "- **Installer** (\`*-windows-x64.exe\`) — recommended"
-            echo "- **Portable zip** (\`*-windows-x64.zip\`) — copy the \`vertical-hud-mask\` folder into \`%ProgramData%\\obs-studio\\plugins\\\`"
+            echo "- **Portable zip** (\`*-windows-x64.zip\`) — copy the \`vertical-hud-mask\` folder into \`%ProgramData%\\obs-studio\\plugins\\\`, or into the \`plugins\` folder next to portable OBS's \`bin\`"
             echo "- **Source** (\`*-source.zip\`)"
             echo
             echo "### Checksums"

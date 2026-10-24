@@ -1,0 +1,13 @@
+{
+    "name": "@PLUGIN_NAME@",
+    "display_name": "@PLUGIN_DISPLAY_NAME@",
+    "id": "@MACOS_BUNDLEID@",
+    "version": "@PLUGIN_VERSION@",
+    "os_arch": "@PLUGIN_OS_ARCH@",
+    "description": "@PLUGIN_DESCRIPTION@",
+    "urls": {
+        "repository": "@PLUGIN_WEBSITE@",
+        "website": "@PLUGIN_WEBSITE@",
+        "support": "@PLUGIN_WEBSITE@"
+    }
+}

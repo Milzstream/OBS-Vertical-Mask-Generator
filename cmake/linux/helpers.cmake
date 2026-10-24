@@ -26,7 +26,7 @@ function(set_target_properties_plugin target)
   install(
     TARGETS ${target}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/obs-plugins
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/obs-modules/plugins
   )
 
   if(TARGET plugin-support)
@@ -44,6 +44,10 @@ function(set_target_properties_plugin target)
   )
 
   target_install_resources(${target})
+  target_install_manifest(
+    ${target}
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-modules/plugins/${target}"
+  )
 
   get_target_property(target_sources ${target} SOURCES)
   set(target_ui_files ${target_sources})
@@ -70,7 +74,7 @@ function(target_install_resources target)
 
     install(
       DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/"
-      DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${target}
+      DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-modules/plugins/${target}
       USE_SOURCE_PERMISSIONS
     )
 
@@ -91,7 +95,7 @@ endfunction()
 function(target_add_resource target resource)
   message(DEBUG "Add resource '${resource}' to target ${target} at destination '${target_destination}'...")
 
-  install(FILES "${resource}" DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${target})
+  install(FILES "${resource}" DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-modules/plugins/${target})
 
   add_custom_command(
     TARGET ${target}

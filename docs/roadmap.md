@@ -2,7 +2,7 @@
 
 ## Shipped
 
-Highlight → optional snap → crop → placeable source. Windows installer to `%ProgramData%\obs-studio\plugins\`, portable zip, launch-time GitHub update check.
+Highlight → optional snap → crop → placeable source. Windows installer to `%ProgramData%\obs-studio\plugins\` (OBS 33 bundle: DLL next to `data`), portable zip, launch-time GitHub update check.
 
 - Plugin bootstrap + CI
 - Sample any source or scene, masked draw
