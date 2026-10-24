@@ -1,8 +1,8 @@
 #ifndef MyAppName
-#define MyAppName "HUD Mask"
+#define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.5.1"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "vertical-hud-mask-0.5.0-windows-x64"
+#define OutputName "source-cutout-0.5.1-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -91,11 +91,24 @@ begin
 end;
 
 function InitializeSetup: Boolean;
+var
+  Tries: Integer;
 begin
   Result := True;
+  Tries := 0;
   while IsOBSRunning do
   begin
-    if MsgBox('OBS Studio is running. Close OBS, then click Retry to install HUD Mask.', mbInformation, MB_RETRYCANCEL) = IDCANCEL then
+    if WizardSilent then
+    begin
+      if Tries >= 45 then
+      begin
+        Result := False;
+        Exit;
+      end;
+      Sleep(1000);
+      Tries := Tries + 1;
+    end
+    else if MsgBox('OBS Studio is running. Close OBS, then click Retry to install Source Cutout.', mbInformation, MB_RETRYCANCEL) = IDCANCEL then
     begin
       Result := False;
       Exit;

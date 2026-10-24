@@ -6,7 +6,7 @@ v1
 
 A single highlight over several disconnected blobs (e.g. three ability circles) becomes **islands**. Auto-hide can drop one island and leave the others.
 
-Example: an ability bar drawn as three circles. Some kits only show the right two — only the left circle should disappear. The user should not have to add three HUD Mask sources for that, though that remains the fallback.
+Example: an ability bar drawn as three circles. Some kits only show the right two — only the left circle should disappear. The user should not have to add three Source Cutout sources for that, though that remains the fallback.
 
 ## In scope
 
@@ -26,4 +26,4 @@ Example: an ability bar drawn as three circles. Some kits only show the right tw
 - [ ] Three-circle mask: hiding the left blob leaves the other two
 - [ ] All three gone → whole source transparent
 - [ ] One solid panel → one island (no spurious splits)
-- [ ] Fallback of three separate HUD Mask sources still works
+- [ ] Fallback of three separate Source Cutout sources still works

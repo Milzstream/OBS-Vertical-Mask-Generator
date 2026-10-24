@@ -1,6 +1,6 @@
 ## Product
 
-A **general OBS cut-out source** (working name **HUD Mask**).
+A **general OBS cut-out source** (working name **Source Cutout**).
 
 Intended use: Aitum Stream Suite vertical canvas — crop the 16:9 world, then cut out HUD that the crop hid and drag those pieces into the leftover 9:16 space.
 
@@ -8,7 +8,7 @@ Technical scope: **any OBS source, any scene, any canvas.** Not Aitum-specific, 
 
 ## Setup (one instance = one element)
 
-1. Add Source → HUD Mask
+1. Add Source → Source Cutout
 2. Pick the source to sample
 3. Live view + **highlighter** (rough is fine)
 4. Plugin **cleans up** the highlight so it hugs the element, then **crops** to it
@@ -22,9 +22,9 @@ When on: islands (disconnected blobs in one mask) hide independently if that blo
 
 All visible auto-hide masks share **one presence cycle**, grouped by sampled source. Hidden items are skipped.
 
-If cleanup finds several blobs, **Split into N sources** creates one HUD Mask per island in a click.
+If cleanup finds several blobs, **Split into N sources** creates one Source Cutout per island in a click.
 
-If islands misbehave, **Split into N sources** or highlight each blob as its own HUD Mask. Layout changes: re-open the editor. No auto-resize.
+If islands misbehave, **Split into N sources** or highlight each blob as its own Source Cutout. Layout changes: re-open the editor. No auto-resize.
 
 ## Not doing
 

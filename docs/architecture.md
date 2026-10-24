@@ -15,7 +15,7 @@ OBS plugin (C++/Qt), new **input source**. GPL-2.0-or-later.
 ## Add-source flow
 
 ```
-Add Source → HUD Mask → name it
+Add Source → Source Cutout → name it
         ↓
 Properties: Type, Canvas (if Scene), target, Same Masks, Draw mask…, Expand, Feather
         ↓
@@ -42,7 +42,7 @@ The properties sheet is small. Crop insets and the mask PNG path are stored on t
 ## Runtime
 
 ```
-Every frame (GPU), per visible HUD Mask
+Every frame (GPU), per visible Source Cutout
   sample target into a texrender
   draw the crop through the current mask (expand / feather already baked or applied)
 ```
@@ -72,7 +72,7 @@ On the source:
 
 ## Performance budget
 
-All HUD Mask instances combined should cost less than an extra game capture.
+All Source Cutout instances combined should cost less than an extra game capture.
 
 - **Draw:** GPU sample + small masked blit per visible instance (same order as a source clone + crop).
 - **Auto-hide off:** no analysis.

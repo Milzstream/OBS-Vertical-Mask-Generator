@@ -5,7 +5,7 @@ C++ OBS plugin bootstrapped from [obs-plugintemplate](https://github.com/obsproj
 | File | Role |
 | --- | --- |
 | `plugin-main.cpp` | Module load/unload |
-| `hud-mask.cpp` | HUD Mask source: sample, crop, mask, expand/feather |
+| `hud-mask.cpp` | Source Cutout source: sample, crop, mask, expand/feather |
 | `cutout-editor.cpp` | Draw-mask editor (Qt) |
 | `mask-process.cpp` | Expand, feather, flood fill/erase, snap, magic shrinkwrap, crop bbox (no OBS/Qt) |
 | `presence.cpp` | Auto-hide shared cycle and still match |
@@ -19,4 +19,4 @@ The editor captures a frame. Tools: Mask/Erase with Circle or Square, Line, Fill
 
 Auto-hide compares the processed mask (expand / feather) to the Draw mask still (`masks/<uuid>.ref`) with a small search for drift. Fade and Match sliders sit next to the checkbox. `presence.cpp` runs the shared downsample cycle (round-robin per target).
 
-After OBS finishes loading, the plugin checks the public GitHub latest release and can open the download.
+After OBS finishes loading, the plugin checks the public GitHub latest release and can download and start the Windows installer.

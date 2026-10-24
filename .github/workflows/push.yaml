@@ -99,9 +99,9 @@ jobs:
           shopt -s extglob
 
           {
-            echo "HUD Mask ${{ steps.check.outputs.version }} for OBS Studio on Windows."
+            echo "Source Cutout ${{ steps.check.outputs.version }} for OBS Studio on Windows."
             echo
-            echo "Add **HUD Mask**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is optional and experimental."
+            echo "Add **Source Cutout**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is optional and experimental."
             echo
             echo "Requires OBS Studio 33 or newer. OBS 32 will not load this build. Close OBS before installing."
             echo
