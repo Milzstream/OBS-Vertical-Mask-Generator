@@ -256,6 +256,16 @@ const char *hud_mask_get_name(void *)
 	return obs_module_text("HUDMask");
 }
 
+const char *hud_mask_icon_dark(void *)
+{
+	return obs_module_file("icons/source-cutout-dark.svg");
+}
+
+const char *hud_mask_icon_light(void *)
+{
+	return obs_module_file("icons/source-cutout-light.svg");
+}
+
 void *hud_mask_create(obs_data_t *settings, obs_source_t *source)
 {
 	auto *ctx = new hud_mask();
@@ -765,7 +775,9 @@ obs_source_info make_info()
 	info.get_height = hud_mask_height;
 	info.video_tick = hud_mask_tick;
 	info.video_render = hud_mask_render;
-	info.icon_type = OBS_ICON_TYPE_COLOR;
+	info.icon_type = OBS_ICON_TYPE_CUSTOM;
+	info.get_dark_icon = hud_mask_icon_dark;
+	info.get_light_icon = hud_mask_icon_light;
 	return info;
 }
 
