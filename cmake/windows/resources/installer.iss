@@ -102,7 +102,7 @@ begin
   end;
 end;
 
-function OBSLaunchPath: String;
+function OBSLaunchPath(Param: String): String;
 begin
   if (OBSExePath <> '') and FileExists(OBSExePath) then
     Result := OBSExePath
@@ -116,7 +116,7 @@ end;
 
 function ShouldOfferOBSLaunch: Boolean;
 begin
-  Result := OBSLaunchPath <> '';
+  Result := OBSLaunchPath('') <> '';
 end;
 
 function IsOBSRunning: Boolean;
@@ -172,7 +172,7 @@ var
 begin
   if (CurStep <> ssPostInstall) or (not WizardSilent) then
     Exit;
-  Path := OBSLaunchPath;
+  Path := OBSLaunchPath('');
   if Path <> '' then
     Exec(Path, '', ExtractFilePath(Path), SW_SHOWNORMAL, ewNoWait, ResultCode);
 end;
