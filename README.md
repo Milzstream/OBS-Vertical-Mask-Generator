@@ -18,7 +18,7 @@ Requires OBS Studio 33+ on Windows 10/11 x64. OBS 32 will not load this build. C
 
    ![Source Cutout in the Add Source menu](docs/images/add-source.png)
 
-The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\` and removes leftover copies from `C:\Program Files\obs-studio\` and from the old `bin\64bit` layout. The folder and source id stay `vertical-hud-mask` so existing scenes and saved masks keep working. A portable OBS copy in a custom folder is not removed. On later launches, Source Cutout checks GitHub for a newer release and can download and start the installer. Close OBS before running a new installer.
+The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\` and removes leftover copies from `C:\Program Files\obs-studio\` and from the old `bin\64bit` layout. The folder and source id stay `vertical-hud-mask` so existing scenes and saved masks keep working. A portable OBS copy in a custom folder is not removed. Each time OBS starts, Source Cutout checks GitHub for a newer release and can download and start the installer. OBS closes for that install and reopens when it finishes.
 
 ## Use
 

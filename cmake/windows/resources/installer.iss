@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.1"
+#define MyAppVersion "0.5.2"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.5.1-windows-x64"
+#define OutputName "source-cutout-0.5.2-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -50,6 +50,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayName={#MyAppName} (OBS Plugin)
 CloseApplications=yes
 CloseApplicationsFilter=obs64.exe,obs32.exe
+RestartApplications=yes
 MinVersion=10.0
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
