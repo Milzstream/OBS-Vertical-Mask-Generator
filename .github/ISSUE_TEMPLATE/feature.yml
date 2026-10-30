@@ -1,5 +1,5 @@
-name: Feature
-description: A piece of the Source Cutout plugin we intend to build
+name: Feature spec
+description: Maintainer write-up for a planned Source Cutout change
 title: "[Feature] "
 labels: ["enhancement"]
 body:

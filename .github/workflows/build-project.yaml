@@ -1,10 +1,18 @@
 name: Build Project
+
+# Called for pull requests, pushes, and manual dispatch. Fork pull requests
+# reach this file from the PR branch with a read-only token and no secrets.
+# Do not switch the caller to pull_request_target. Packaging installs
+# Inno Setup and produces an installer, so fork PRs stop after build and tests.
+
 on:
   workflow_call:
     outputs:
       pluginName:
         description: Project name detected by parsing build spec file
         value: ${{ jobs.check-event.outputs.pluginName }}
+permissions:
+  contents: read
 jobs:
   check-event:
     name: Check GitHub Event Data 🔎
@@ -23,6 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Check Event Data ☑️
         id: setup
         env:
@@ -83,6 +92,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set Up Environment 🔧
         id: setup
@@ -111,6 +121,7 @@ jobs:
           ctest --test-dir build_x64 -C ${{ needs.check-event.outputs.config }} --output-on-failure
 
       - name: Package Plugin 📀
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/package-plugin
         with:
           target: x64
@@ -118,6 +129,7 @@ jobs:
           package: ${{ fromJSON(needs.check-event.outputs.package) }}
 
       - name: Check Package Outputs 📦
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: pwsh
         run: |
           $missing = @()
@@ -131,6 +143,7 @@ jobs:
           }
 
       - name: Upload Artifacts 📡
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-${{ needs.check-event.outputs.commitHash }}

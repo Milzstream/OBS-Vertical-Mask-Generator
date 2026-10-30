@@ -1,0 +1,34 @@
+name: Bug report
+description: Something in Source Cutout is broken
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      placeholder: "0.5.3"
+  - type: input
+    id: obs
+    attributes:
+      label: OBS version
+      placeholder: "33"
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows
+      options:
+        - Windows 11
+        - Windows 10
+        - Other
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: A screenshot or the OBS log helps.
