@@ -1,5 +1,13 @@
 name: Pull Request
 run-name: ${{ github.event.pull_request.title }} pull request run 🚀
+
+# Fork pull_request runs use this YAML from the PR branch, with a read-only
+# GITHUB_TOKEN and no secrets. That is GitHub-hosted isolation, not a local
+# runner issue. Do not switch this workflow to pull_request_target. Keep
+# jobs on GitHub-hosted runners; a self-hosted runner would persist
+# untrusted code. Fork PRs still need maintainer approval before they run.
+# Build and tests run after that approval. Packaging is skipped for forks.
+
 on:
   workflow_dispatch:
   pull_request:
@@ -16,6 +24,5 @@ jobs:
   build-project:
     name: Build Project 🧱
     uses: ./.github/workflows/build-project.yaml
-    secrets: inherit
     permissions:
       contents: read
