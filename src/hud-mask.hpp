@@ -49,6 +49,13 @@ struct hud_mask {
 	uint32_t src_cy = 0;
 	uint32_t cx = 0;
 	uint32_t cy = 0;
+	int draw_left = 0;
+	int draw_top = 0;
+	bool scale_logged = false;
+	bool mask_failed = false;
+	bool ref_missing_logged = false;
+	uint32_t tex_cx = 0;
+	uint32_t tex_cy = 0;
 };
 
 void register_hud_mask_source(void);

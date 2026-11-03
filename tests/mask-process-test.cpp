@@ -342,6 +342,33 @@ int main()
 		CHECK(mask_crop_from_opaque(empty, 8, 8, 20, 32).empty);
 	}
 
+	/* Draw-time crop scale. Insets are left, top, right, bottom. */
+	{
+		const MaskScale id = mask_scale_cutout(130, 100, 10, 5, 20, 15, 100, 80);
+		CHECK(!id.empty && id.left == 10 && id.top == 5 && id.width == 100 && id.height == 80);
+
+		const MaskScale x2 = mask_scale_cutout(260, 200, 10, 5, 20, 15, 100, 80);
+		CHECK(!x2.empty && x2.left == 20 && x2.top == 10 && x2.width == 200 && x2.height == 160);
+
+		const MaskScale none = mask_scale_cutout(200, 100, 10, 5, 20, 15, 0, 0);
+		CHECK(!none.empty && none.left == 10 && none.top == 5 && none.width == 170 && none.height == 80);
+
+		const MaskScale full = mask_scale_cutout(1920, 1080, 0, 0, 0, 0, 0, 0);
+		CHECK(!full.empty && full.left == 0 && full.top == 0 && full.width == 1920 && full.height == 1080);
+
+		const MaskScale ratio = mask_scale_cutout(400, 400, 50, 100, 150, 100, 100, 100);
+		CHECK(!ratio.empty && ratio.left == 67 && ratio.top == 133 && ratio.width == 133 && ratio.height == 134);
+
+		const MaskScale gone = mask_scale_cutout(20, 100, 100, 0, 100, 0, 1, 100);
+		CHECK(gone.empty && gone.width == 0 && gone.height == 0);
+
+		CHECK(mask_scale_cutout(0, 100, 10, 5, 20, 15, 100, 80).empty);
+		CHECK(mask_scale_cutout(-1, 100, 0, 0, 0, 0, 10, 10).empty);
+
+		const MaskScale neg = mask_scale_cutout(120, 100, -4, 5, 20, 15, 100, 80);
+		CHECK(!neg.empty && neg.left == 0 && neg.top == 5 && neg.width == 100 && neg.height == 80);
+	}
+
 	/* Snap a painted ring onto a high-contrast box, not an inner icon. */
 	{
 		const int w = 64, h = 64;

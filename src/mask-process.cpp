@@ -309,6 +309,57 @@ MaskCrop mask_crop_from_opaque(const std::vector<uint8_t> &gray, int width, int 
 	return c;
 }
 
+MaskScale mask_scale_cutout(int live_w, int live_h, int crop_left, int crop_top, int crop_right, int crop_bottom,
+			    int mask_w, int mask_h)
+{
+	MaskScale s;
+	if (live_w <= 0 || live_h <= 0)
+		return s;
+
+	const int left = std::max(crop_left, 0);
+	const int top = std::max(crop_top, 0);
+	const int right = std::max(crop_right, 0);
+	const int bottom = std::max(crop_bottom, 0);
+
+	auto unscaled = [&]() {
+		const int w = live_w - left - right;
+		const int h = live_h - top - bottom;
+		if (w <= 0 || h <= 0)
+			return s;
+		s.left = left;
+		s.top = top;
+		s.width = w;
+		s.height = h;
+		s.empty = false;
+		return s;
+	};
+
+	if (mask_w <= 0 || mask_h <= 0)
+		return unscaled();
+
+	const int auth_w = left + mask_w + right;
+	const int auth_h = top + mask_h + bottom;
+	if (auth_w <= 0 || auth_h <= 0)
+		return s;
+	if (auth_w == live_w && auth_h == live_h)
+		return unscaled();
+
+	const int sl = static_cast<int>(std::lround(static_cast<double>(left) * live_w / auth_w));
+	const int sr = static_cast<int>(std::lround(static_cast<double>(right) * live_w / auth_w));
+	const int st = static_cast<int>(std::lround(static_cast<double>(top) * live_h / auth_h));
+	const int sb = static_cast<int>(std::lround(static_cast<double>(bottom) * live_h / auth_h));
+	const int w = live_w - sl - sr;
+	const int h = live_h - st - sb;
+	if (w <= 0 || h <= 0)
+		return s;
+	s.left = sl;
+	s.top = st;
+	s.width = w;
+	s.height = h;
+	s.empty = false;
+	return s;
+}
+
 void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height, const std::vector<MaskPoint> &poly)
 {
 	const int n = static_cast<int>(poly.size());

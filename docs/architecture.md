@@ -21,11 +21,11 @@ Properties: Type, Canvas (if Scene), target, Same Masks, Draw mask…, Expand, F
         ↓
 Draw mask editor
   live (or paused) view of the sampled source
-  Mask / Erase · Circle · Square · Line · Fill · Magic Select
+  Mask / Erase · Circle · Square · Line · Shape · Fill · Magic Select
   Snap Edges · Undo · Refresh · Clear
   Apply
         ↓
-source size = opaque bbox of the mask plus 32px pad
+source size = saved crop, scaled to the live filtered frame
 user transforms the scene item
 ```
 
@@ -44,7 +44,8 @@ The properties sheet is small. Crop insets and the mask PNG path are stored on t
 ```
 Every frame (GPU), per visible Source Cutout
   sample target into a texrender
-  draw the crop through the current mask (expand / feather already baked or applied)
+  scale saved crop insets from the authored filtered size to the live size
+  draw that crop through the current mask (expand / feather already baked)
 ```
 
 ### Auto-hide
@@ -57,7 +58,7 @@ Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide
 
 User paint is the mask. Optional **Snap Edges** walks the painted border and pulls it onto nearby frame contrast (any color). **Magic Select** shrinkwraps a rough loop onto the outer edge. **Fill** floods an outline and swallows the ring. None of this runs at 60 fps.
 
-Crop = bounding box of remaining opaque pixels, padded 32px. Mask PNG is saved at crop size under the plugin config directory.
+Crop = bounding box of remaining opaque pixels, padded 32px. Mask PNG is saved at crop size as `masks/<source-uuid>.png` under the plugin config directory. A duplicate copies that PNG and its still/reference beside its own uuid. At draw time the saved insets are scaled from the authored filtered size to the live filtered size, so a base-resolution change does not shift the cut-out. A missing mask draws nothing. A missing auto-hide reference does not adopt the live frame.
 
 ## Persistence
 
@@ -65,7 +66,7 @@ On the source:
 
 - Target kind, canvas uuid, source name
 - Crop rect
-- Mask PNG path
+- Mask PNG path (`masks/<uuid>.png`, or an older absolute path whose file name already matches the source uuid)
 - Expand, feather
 - Auto-hide, fade ms, match percent
 - Presence still (`masks/<uuid>.ref`) next to the mask PNG

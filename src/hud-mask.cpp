@@ -16,10 +16,14 @@ the Free Software Foundation; either version 2 of the License, or
 #include <obs-module.h>
 #include <graphics/graphics.h>
 #include <plugin-support.h>
+#include <util/platform.h>
 
+#include <QFile>
+#include <QFileInfo>
 #include <QImage>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -180,22 +184,154 @@ void free_mask_texture(hud_mask *ctx)
 	ctx->mask_loaded = false;
 }
 
+bool path_is_absolute(const char *path)
+{
+	if (!path || !path[0])
+		return false;
+	if (path[0] == '/' || path[0] == '\\')
+		return true;
+	const unsigned char c0 = static_cast<unsigned char>(path[0]);
+	return path[1] == ':' && std::isalpha(c0);
+}
+
+std::string resolve_stored_mask_path(const char *stored)
+{
+	if (!stored || !stored[0])
+		return {};
+	if (path_is_absolute(stored))
+		return stored;
+	char *full = obs_module_get_config_path(obs_current_module(), stored);
+	if (!full)
+		return stored;
+	std::string out = full;
+	bfree(full);
+	return out;
+}
+
+std::string path_stem(const std::string &path)
+{
+	const size_t slash = path.find_last_of("/\\");
+	std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+	const size_t dot = name.find_last_of('.');
+	if (dot != std::string::npos)
+		name.resize(dot);
+	return name;
+}
+
+bool stem_eq_uuid(const std::string &stem, const char *uuid)
+{
+	if (!uuid || !uuid[0] || stem.size() != std::strlen(uuid))
+		return false;
+	for (size_t i = 0; i < stem.size(); i++) {
+		const auto a = static_cast<unsigned char>(stem[i]);
+		const auto b = static_cast<unsigned char>(uuid[i]);
+		if (std::tolower(a) != std::tolower(b))
+			return false;
+	}
+	return true;
+}
+
+bool paths_equal(const std::string &a, const std::string &b)
+{
+	if (a.size() != b.size())
+		return false;
+	for (size_t i = 0; i < a.size(); i++) {
+		unsigned char ca = static_cast<unsigned char>(a[i] == '\\' ? '/' : a[i]);
+		unsigned char cb = static_cast<unsigned char>(b[i] == '\\' ? '/' : b[i]);
+		if (std::tolower(ca) != std::tolower(cb))
+			return false;
+	}
+	return true;
+}
+
+void copy_sidecar(const std::string &src, const std::string &dst)
+{
+	if (src.empty() || dst.empty() || paths_equal(src, dst))
+		return;
+	const QString from = QString::fromUtf8(src.c_str());
+	const QString to = QString::fromUtf8(dst.c_str());
+	if (!QFileInfo::exists(from))
+		return;
+	QFile::remove(to);
+	QFile::copy(from, to);
+}
+
+void claim_mask_files(hud_mask *ctx, obs_data_t *settings)
+{
+	const char *stored = obs_data_get_string(settings, k_mask_path);
+	if (!stored || !stored[0] || !ctx->self)
+		return;
+	const char *uuid = obs_source_get_uuid(ctx->self);
+	if (!uuid || !uuid[0])
+		return;
+
+	const std::string resolved = resolve_stored_mask_path(stored);
+	const std::string stem = path_stem(resolved.empty() ? stored : resolved);
+	if (stem_eq_uuid(stem, uuid))
+		return;
+
+	const std::string rel = std::string("masks/") + uuid + ".png";
+	char *dest_full = obs_module_get_config_path(obs_current_module(), rel.c_str());
+	if (!dest_full)
+		return;
+	const std::string dest = dest_full;
+	bfree(dest_full);
+
+	if (resolved.empty() || !QFileInfo::exists(QString::fromUtf8(resolved.c_str())) || paths_equal(resolved, dest))
+		return;
+
+	char *dir = obs_module_get_config_path(obs_current_module(), "masks");
+	if (dir) {
+		os_mkdirs(dir);
+		bfree(dir);
+	}
+
+	const QString from = QString::fromUtf8(resolved.c_str());
+	const QString to = QString::fromUtf8(dest.c_str());
+	QFile::remove(to);
+	if (!QFile::copy(from, to)) {
+		obs_log(LOG_WARNING, "failed to copy mask '%s' to '%s'", resolved.c_str(), dest.c_str());
+		return;
+	}
+	copy_sidecar(hud_mask_presence_still_path(resolved), hud_mask_presence_still_path(dest));
+	copy_sidecar(hud_mask_presence_ref_path(resolved), hud_mask_presence_ref_path(dest));
+	obs_data_set_string(settings, k_mask_path, rel.c_str());
+	obs_log(LOG_INFO, "adopted mask for source %s from '%s'", uuid, resolved.c_str());
+}
+
 void load_mask_texture(hud_mask *ctx, const char *path)
 {
+	const std::string resolved = resolve_stored_mask_path(path);
+	const bool path_changed = !paths_equal(resolved, ctx->mask_path);
+	const int prev_w = ctx->mask_w;
+	const int prev_h = ctx->mask_h;
 	free_mask_texture(ctx);
-	ctx->mask_path = path ? path : "";
+	ctx->mask_path = resolved;
 	ctx->mask_gray.clear();
 	ctx->mask_w = ctx->mask_h = 0;
+	if (path_changed) {
+		ctx->mask_failed = false;
+		ctx->ref_missing_logged = false;
+	}
 	if (ctx->mask_path.empty()) {
 		hud_mask_presence_clear_ref(ctx);
+		ctx->mask_failed = false;
 		return;
 	}
 
 	QImage img(QString::fromUtf8(ctx->mask_path.c_str()));
 	if (img.isNull()) {
-		obs_log(LOG_WARNING, "failed to load mask '%s'", ctx->mask_path.c_str());
+		if (!path_changed) {
+			ctx->mask_w = prev_w;
+			ctx->mask_h = prev_h;
+		}
+		if (!ctx->mask_failed) {
+			obs_log(LOG_WARNING, "failed to load mask '%s'", ctx->mask_path.c_str());
+			ctx->mask_failed = true;
+		}
 		return;
 	}
+	ctx->mask_failed = false;
 	img = img.convertToFormat(QImage::Format_Grayscale8);
 	const int w = img.width();
 	const int h = img.height();
@@ -210,8 +346,6 @@ void load_mask_texture(hud_mask *ctx, const char *path)
 	ctx->mask_w = w;
 	ctx->mask_h = h;
 	hud_mask_presence_load_ref(ctx);
-	if (ctx->auto_hide && !ctx->ref_valid)
-		ctx->ref_capture_pending = true;
 
 	if (ctx->expand != 0 || ctx->feather > 0) {
 		mask_binarize(gray);
@@ -236,19 +370,30 @@ void update_size(hud_mask *ctx)
 		return;
 	}
 
-	ctx->src_cx = obs_source_get_base_width(target);
-	ctx->src_cy = obs_source_get_base_height(target);
+	ctx->src_cx = obs_source_get_width(target);
+	ctx->src_cy = obs_source_get_height(target);
 	obs_source_release(target);
 
-	const int left = std::max(ctx->crop_left, 0);
-	const int top = std::max(ctx->crop_top, 0);
-	const int right = std::max(ctx->crop_right, 0);
-	const int bottom = std::max(ctx->crop_bottom, 0);
-
-	const int w = static_cast<int>(ctx->src_cx) - left - right;
-	const int h = static_cast<int>(ctx->src_cy) - top - bottom;
-	ctx->cx = w > 0 ? static_cast<uint32_t>(w) : 0;
-	ctx->cy = h > 0 ? static_cast<uint32_t>(h) : 0;
+	const MaskScale sc = mask_scale_cutout(static_cast<int>(ctx->src_cx), static_cast<int>(ctx->src_cy),
+					       ctx->crop_left, ctx->crop_top, ctx->crop_right, ctx->crop_bottom,
+					       ctx->mask_w, ctx->mask_h);
+	if (sc.empty) {
+		ctx->draw_left = ctx->draw_top = 0;
+		ctx->cx = ctx->cy = 0;
+		if (ctx->mask_loaded && ctx->src_cx > 0 && ctx->src_cy > 0 && !ctx->scale_logged) {
+			const int auth_w = std::max(ctx->crop_left, 0) + ctx->mask_w + std::max(ctx->crop_right, 0);
+			const int auth_h = std::max(ctx->crop_top, 0) + ctx->mask_h + std::max(ctx->crop_bottom, 0);
+			obs_log(LOG_WARNING, "cutout scale empty (live %ux%u, authored %dx%d)", ctx->src_cx, ctx->src_cy,
+				auth_w, auth_h);
+			ctx->scale_logged = true;
+		}
+		return;
+	}
+	ctx->draw_left = sc.left;
+	ctx->draw_top = sc.top;
+	ctx->cx = static_cast<uint32_t>(sc.width);
+	ctx->cy = static_cast<uint32_t>(sc.height);
+	ctx->scale_logged = false;
 }
 
 const char *hud_mask_get_name(void *)
@@ -312,14 +457,13 @@ void hud_mask_update(void *data, obs_data_t *settings)
 		ctx->match_pct = 0;
 	if (ctx->match_pct > 100)
 		ctx->match_pct = 100;
+	claim_mask_files(ctx, settings);
 	load_mask_texture(ctx, obs_data_get_string(settings, k_mask_path));
 	if (!ctx->auto_hide) {
 		ctx->presence_shown = true;
 		ctx->draw_alpha = 1.0f;
 		ctx->presence_streak = 0;
 		ctx->ref_capture_pending = false;
-	} else if (!ctx->ref_valid) {
-		ctx->ref_capture_pending = true;
 	}
 	update_size(ctx);
 }
@@ -718,6 +862,8 @@ void hud_mask_render(void *data, gs_effect_t *)
 	auto *ctx = static_cast<hud_mask *>(data);
 	if (ctx->rendering || ctx->cx == 0 || ctx->cy == 0)
 		return;
+	if (!ctx->mask_path.empty() && !ctx->mask_loaded)
+		return;
 	if (ctx->auto_hide && ctx->draw_alpha <= 0.001f)
 		return;
 
@@ -727,13 +873,18 @@ void hud_mask_render(void *data, gs_effect_t *)
 
 	ctx->rendering = true;
 
-	if (!ctx->texrender)
+	if (!ctx->texrender || ctx->tex_cx != ctx->cx || ctx->tex_cy != ctx->cy) {
+		if (ctx->texrender)
+			gs_texrender_destroy(ctx->texrender);
 		ctx->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-	else
+		ctx->tex_cx = ctx->cx;
+		ctx->tex_cy = ctx->cy;
+	} else {
 		gs_texrender_reset(ctx->texrender);
+	}
 
-	const float left = static_cast<float>(std::max(ctx->crop_left, 0));
-	const float top = static_cast<float>(std::max(ctx->crop_top, 0));
+	const float left = static_cast<float>(ctx->draw_left);
+	const float top = static_cast<float>(ctx->draw_top);
 
 	gs_blend_state_push();
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);

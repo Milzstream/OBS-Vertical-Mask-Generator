@@ -52,6 +52,20 @@ int mask_sobel(const std::vector<uint8_t> &lum, int width, int height, std::vect
 MaskCrop mask_crop_from_opaque(const std::vector<uint8_t> &gray, int width, int height, uint8_t threshold = 20,
 			       int pad = 32);
 
+struct MaskScale {
+	int left = 0;
+	int top = 0;
+	int width = 0;
+	int height = 0;
+	bool empty = true;
+};
+
+/* Scale saved crop insets from the authored filtered size (insets + mask) to the
+ * live size. empty if the scaled cutout has no area. Unknown mask size leaves
+ * the insets unscaled. */
+MaskScale mask_scale_cutout(int live_w, int live_h, int crop_left, int crop_top, int crop_right, int crop_bottom,
+			    int mask_w, int mask_h);
+
 /* Snap painted pixels (>= 40) onto nearby luma edges. Writes a hard 0/255
  * fill. Prefers the nearest strong edge to the paint boundary so inner art
  * does not pull the mask in. Returns false if there is not enough paint. */
