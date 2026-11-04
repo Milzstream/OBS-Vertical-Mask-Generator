@@ -30,8 +30,9 @@ The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\`
 
 4. **Draw mask…**
    - **Mask Brush** / **Erase Brush**, then Circle or Square. Wheel or the Size slider sets the brush. Size is only for those two shapes.
-   - **Line** — hold to place, pause to straighten, click near the start or press Enter to close.
-   - **Fill** — click inside an outline (any brush or a closed line).
+   - **Line** — drag to draw. Pause to straighten. Size sets the width. Escape cancels the stroke in progress.
+   - **Shape** — hold to place, pause to straighten. Click near the start or press Enter to close. Escape drops an open chain.
+   - **Fill** — click inside an outline (any brush or a closed shape).
    - **Magic Select** — draw a rough loop around the element and release. If the MobileSAM model is installed it picks the element inside the loop. Otherwise it falls back to the old edge snap.
    - **Snap Edges** pulls a painted silhouette onto nearby contrast in the frame.
    - Ctrl+wheel or the zoom slider to zoom, Ctrl+0 for 100%. Space or middle-mouse to pan. Pause/Play freezes or resumes the live frame. Undo, Refresh, Clear, then **Apply**.

@@ -129,15 +129,21 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 {
 	if (!ctx || !rgba || src_cx < 1 || src_cy < 1 || ds_cx < 1 || ds_cy < 1)
 		return;
-	if (ctx->cx < 1 || ctx->cy < 1)
+	if (!ctx->ref_valid || ctx->ref_luma.empty() || ctx->ref_w < 1 || ctx->ref_h < 1)
+		return;
+
+	const MaskScale sc = mask_scale_cutout(static_cast<int>(src_cx), static_cast<int>(src_cy), ctx->crop_left,
+					       ctx->crop_top, ctx->crop_right, ctx->crop_bottom, ctx->mask_w,
+					       ctx->mask_h);
+	if (sc.empty || sc.width < 1 || sc.height < 1)
 		return;
 
 	const float sx = static_cast<float>(ds_cx) / static_cast<float>(src_cx);
 	const float sy = static_cast<float>(ds_cy) / static_cast<float>(src_cy);
-	const int x0 = std::max(0, static_cast<int>(ctx->crop_left * sx));
-	const int y0 = std::max(0, static_cast<int>(ctx->crop_top * sy));
-	const int rw = std::max(1, static_cast<int>(ctx->cx * sx));
-	const int rh = std::max(1, static_cast<int>(ctx->cy * sy));
+	const int x0 = std::max(0, static_cast<int>(sc.left * sx));
+	const int y0 = std::max(0, static_cast<int>(sc.top * sy));
+	const int rw = std::max(1, static_cast<int>(sc.width * sx));
+	const int rh = std::max(1, static_cast<int>(sc.height * sy));
 
 	std::vector<uint8_t> roi(static_cast<size_t>(rw) * rh);
 	for (int y = 0; y < rh; y++) {
@@ -158,12 +164,6 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 	mask_presence_prepare_mask(processed, ctx->mask_w, ctx->mask_h, ctx->expand, ctx->feather);
 	std::vector<uint8_t> mask_s;
 	mask_resize_mask(processed, ctx->mask_w, ctx->mask_h, mask_s, rw, rh);
-
-	if (!ctx->ref_valid || ctx->ref_luma.empty() || ctx->ref_w < 1 || ctx->ref_h < 1) {
-		if (ctx->auto_hide)
-			hud_mask_presence_save_ref(ctx, roi.data(), mask_s.data(), rw, rh);
-		return;
-	}
 
 	std::vector<uint8_t> ref_s;
 	mask_resize_luma(ctx->ref_luma, ctx->ref_w, ctx->ref_h, ref_s, rw, rh);
@@ -250,8 +250,8 @@ bool start_job()
 	if (!target)
 		return false;
 
-	const uint32_t src_cx = obs_source_get_base_width(target);
-	const uint32_t src_cy = obs_source_get_base_height(target);
+	const uint32_t src_cx = obs_source_get_width(target);
+	const uint32_t src_cy = obs_source_get_height(target);
 	if (!src_cx || !src_cy) {
 		obs_source_release(target);
 		return false;
@@ -342,6 +342,11 @@ std::string hud_mask_presence_still_path(const std::string &mask_path)
 	return still_path_for_mask(mask_path);
 }
 
+std::string hud_mask_presence_ref_path(const std::string &mask_path)
+{
+	return ref_path_for_mask(mask_path);
+}
+
 void hud_mask_presence_start(void)
 {
 	if (g_started)
@@ -420,8 +425,13 @@ void hud_mask_presence_load_ref(hud_mask *ctx)
 
 	const std::string path = ref_path_for_mask(ctx->mask_path);
 	FILE *f = os_fopen(path.c_str(), "rb");
-	if (!f)
+	if (!f) {
+		if (ctx->auto_hide && !ctx->ref_missing_logged) {
+			obs_log(LOG_WARNING, "auto-hide reference missing '%s'", path.c_str());
+			ctx->ref_missing_logged = true;
+		}
 		return;
+	}
 	char magic[6];
 	uint32_t wh[2] = {0, 0};
 	if (fread(magic, 1, 6, f) != 6 || memcmp(magic, k_ref_magic, 6) != 0 || fread(wh, 4, 2, f) != 2) {
@@ -448,6 +458,7 @@ void hud_mask_presence_load_ref(hud_mask *ctx)
 	ctx->ref_h = h;
 	ctx->ref_valid = true;
 	ctx->ref_capture_pending = false;
+	ctx->ref_missing_logged = false;
 }
 
 bool hud_mask_presence_save_ref(hud_mask *ctx, const uint8_t *luma, const uint8_t *mask_gray, int width, int height)

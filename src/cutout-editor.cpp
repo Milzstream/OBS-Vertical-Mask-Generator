@@ -245,7 +245,7 @@ void capture_tick(void *param, float)
 }
 
 enum class BrushShape { Circle, Square };
-enum class EditorTool { Paint, Line, Fill, Magic };
+enum class EditorTool { Paint, Line, Shape, Fill, Magic };
 
 QCursor make_bucket_cursor()
 {
@@ -323,6 +323,8 @@ public:
 	void setTool(EditorTool t)
 	{
 		cancelLineDrag();
+		linePts_.clear();
+		lineAnchor_ = {};
 		magicPath_.clear();
 		magicDragging_ = false;
 		magicMissed_ = false;
@@ -411,6 +413,10 @@ public:
 		if (mask.isNull())
 			return;
 		pushUndo();
+		cancelLineDrag();
+		linePts_.clear();
+		closedPoly_.clear();
+		lineAnchor_ = {};
 		mask.fill(0);
 		update();
 	}
@@ -421,9 +427,14 @@ public:
 	{
 		if (!hasUndo_ || undoMask_.isNull())
 			return;
+		cancelLineDrag();
 		mask = undoMask_;
+		linePts_ = undoLinePts_;
+		closedPoly_ = undoClosedPoly_;
 		hasUndo_ = false;
 		undoMask_ = QImage();
+		undoLinePts_.clear();
+		undoClosedPoly_.clear();
 		if (undoChanged)
 			undoChanged();
 		update();
@@ -434,6 +445,8 @@ public:
 		if (mask.isNull())
 			return;
 		undoMask_ = mask.copy();
+		undoLinePts_ = linePts_;
+		undoClosedPoly_ = closedPoly_;
 		hasUndo_ = true;
 		if (undoChanged)
 			undoChanged();
@@ -531,13 +544,35 @@ public:
 
 	void closePolyline()
 	{
-		if (linePts_.size() < 3)
+		if (tool != EditorTool::Shape || linePts_.size() < 3)
 			return;
+		cancelLineDrag();
 		pushUndo();
-		strokeOnMask(linePts_.back(), linePts_.front());
+		strokeOnMask(linePts_.back(), linePts_.front(), 2.0);
 		closedPoly_ = linePts_;
 		closedPoly_ << linePts_.front();
 		linePts_.clear();
+		update();
+	}
+
+	void onEscape()
+	{
+		if (tool == EditorTool::Shape) {
+			if (lineDragging_) {
+				cancelLineDrag();
+				return;
+			}
+			linePts_.clear();
+			update();
+			return;
+		}
+		if (tool == EditorTool::Line) {
+			cancelLineDrag();
+			return;
+		}
+		cancelLineDrag();
+		magicPath_.clear();
+		magicDragging_ = false;
 		update();
 	}
 
@@ -598,16 +633,17 @@ protected:
 			p.setPen(QPen(QColor(255, 255, 255), wgt, Qt::SolidLine, Qt::RoundCap));
 			p.drawLine(a, b);
 		};
-		if (tool == EditorTool::Line && lineDragging_ && !linePts_.empty()) {
+		if ((tool == EditorTool::Line || tool == EditorTool::Shape) && lineDragging_) {
+			const int width = tool == EditorTool::Line ? brush : 2;
+			const QPointF from = tool == EditorTool::Line ? lineAnchor_
+								     : (linePts_.empty() ? cursorSrc_ : linePts_.back());
 			p.setBrush(Qt::NoBrush);
-			QPen cyan(QColor(80, 220, 255), 2);
-			cyan.setCapStyle(Qt::RoundCap);
-			p.setPen(cyan);
 			if (lineStraight_) {
-				p.drawLine(srcToWidget(linePts_.back()), srcToWidget(cursorSrc_));
+				drawPreviewLine(srcToWidget(from), srcToWidget(cursorSrc_), width);
 			} else if (lineFreehand_.size() >= 2) {
 				for (int i = 1; i < lineFreehand_.size(); i++)
-					p.drawLine(srcToWidget(lineFreehand_[i - 1]), srcToWidget(lineFreehand_[i]));
+					drawPreviewLine(srcToWidget(lineFreehand_[i - 1]), srcToWidget(lineFreehand_[i]),
+							width);
 			}
 		}
 		if (tool == EditorTool::Magic && magicPath_.size() >= 2) {
@@ -697,8 +733,7 @@ protected:
 			return;
 		}
 		if (e->key() == Qt::Key_Escape) {
-			cancelLineDrag();
-			magicPath_.clear();
+			onEscape();
 			e->accept();
 			return;
 		}
@@ -845,7 +880,7 @@ private:
 			stamp(line.pointAt(i / static_cast<double>(steps)));
 	}
 
-	void strokeOnMask(const QPointF &a, const QPointF &b)
+	void strokeOnMask(const QPointF &a, const QPointF &b, double width)
 	{
 		if (mask.isNull())
 			return;
@@ -853,7 +888,7 @@ private:
 		p.setRenderHint(QPainter::Antialiasing, true);
 		if (erase)
 			p.setCompositionMode(QPainter::CompositionMode_Source);
-		QPen pen(erase ? Qt::black : Qt::white, 2.0);
+		QPen pen(erase ? Qt::black : Qt::white, width);
 		pen.setCapStyle(Qt::RoundCap);
 		pen.setJoinStyle(Qt::RoundJoin);
 		p.setPen(pen);
@@ -878,13 +913,19 @@ private:
 			return;
 		}
 		if (tool == EditorTool::Line) {
-			if (linePts_.size() >= 3) {
-				const QPointF first = linePts_.front();
-				const double d = QLineF(src, first).length();
-				if (d <= std::max(8.0, brush * 0.8)) {
-					closePolyline();
-					return;
-				}
+			lineAnchor_ = src;
+			lineDragging_ = true;
+			lineStraight_ = false;
+			lineFreehand_.clear();
+			lineFreehand_ << src << src;
+			if (dwell_)
+				dwell_->start();
+			return;
+		}
+		if (tool == EditorTool::Shape) {
+			if (linePts_.size() >= 3 && QLineF(src, linePts_.front()).length() <= 8.0) {
+				closePolyline();
+				return;
 			}
 			if (linePts_.empty())
 				linePts_ << src;
@@ -911,7 +952,7 @@ private:
 				magicPath_ << src;
 			return;
 		}
-		if (tool == EditorTool::Line && lineDragging_) {
+		if ((tool == EditorTool::Line || tool == EditorTool::Shape) && lineDragging_) {
 			if (lineStraight_) {
 				cursorSrc_ = src;
 			} else {
@@ -942,24 +983,36 @@ private:
 			if (dwell_)
 				dwell_->stop();
 			pushUndo();
-			const QPointF from = linePts_.back();
+			if (lineStraight_)
+				strokeOnMask(lineAnchor_, src, brush);
+			else {
+				for (int i = 1; i < lineFreehand_.size(); i++)
+					strokeOnMask(lineFreehand_[i - 1], lineFreehand_[i], brush);
+			}
+			lineDragging_ = false;
+			lineStraight_ = false;
+			lineFreehand_.clear();
+			return;
+		}
+		if (tool == EditorTool::Shape && lineDragging_) {
+			if (dwell_)
+				dwell_->stop();
+			pushUndo();
+			const QPointF from = linePts_.isEmpty() ? src : linePts_.back();
 			if (lineStraight_) {
-				strokeOnMask(from, src);
+				strokeOnMask(from, src, 2.0);
 				linePts_ << src;
 			} else {
 				for (int i = 1; i < lineFreehand_.size(); i++)
-					strokeOnMask(lineFreehand_[i - 1], lineFreehand_[i]);
+					strokeOnMask(lineFreehand_[i - 1], lineFreehand_[i], 2.0);
 				if (!lineFreehand_.isEmpty())
 					linePts_ << lineFreehand_.back();
 			}
 			lineDragging_ = false;
 			lineStraight_ = false;
 			lineFreehand_.clear();
-			if (linePts_.size() >= 3) {
-				const double d = QLineF(linePts_.back(), linePts_.front()).length();
-				if (d <= std::max(8.0, brush * 0.8))
-					closePolyline();
-			}
+			if (linePts_.size() >= 3 && QLineF(linePts_.back(), linePts_.front()).length() <= 8.0)
+				closePolyline();
 			return;
 		}
 		painting_ = false;
@@ -1040,10 +1093,13 @@ private:
 	QPointF lastSrc_;
 	QPointF cursorSrc_;
 	QImage undoMask_;
+	QPolygonF undoLinePts_;
+	QPolygonF undoClosedPoly_;
 	bool hasUndo_ = false;
 	QTimer *dwell_ = nullptr;
 	bool lineDragging_ = false;
 	bool lineStraight_ = false;
+	QPointF lineAnchor_;
 	QPolygonF linePts_;
 	QPolygonF lineFreehand_;
 	bool magicDragging_ = false;
@@ -1074,8 +1130,9 @@ public:
 		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.BrushCircle")), 0);
 		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.BrushSquare")), 1);
 		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Line")), 2);
-		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Fill")), 3);
-		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Magic")), 4);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Shape")), 3);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Fill")), 4);
+		shape->addItem(QString::fromUtf8(obs_module_text("HUDMask.Editor.Magic")), 5);
 
 		auto *brushLabel = new QLabel(this);
 		auto *brush = new QSlider(Qt::Horizontal, this);
@@ -1144,12 +1201,14 @@ public:
 			const char *hint = "HUDMask.Editor.HintBrush";
 			if (t == EditorTool::Line)
 				hint = "HUDMask.Editor.HintLine";
+			else if (t == EditorTool::Shape)
+				hint = "HUDMask.Editor.HintShape";
 			else if (t == EditorTool::Fill)
 				hint = "HUDMask.Editor.HintFill";
 			else if (t == EditorTool::Magic)
 				hint = "HUDMask.Editor.HintMagic";
 			hintTool->setText(QString::fromUtf8(obs_module_text(hint)));
-			const bool sizeOn = t == EditorTool::Paint;
+			const bool sizeOn = t == EditorTool::Paint || t == EditorTool::Line;
 			brush->setEnabled(sizeOn);
 			brushLabel->setEnabled(sizeOn);
 		};
@@ -1184,6 +1243,8 @@ public:
 			} else if (id == 2) {
 				canvas_->setTool(EditorTool::Line);
 			} else if (id == 3) {
+				canvas_->setTool(EditorTool::Shape);
+			} else if (id == 4) {
 				canvas_->setTool(EditorTool::Fill);
 			} else {
 				canvas_->setTool(EditorTool::Magic);
@@ -1272,7 +1333,7 @@ protected:
 			return;
 		}
 		if (e->key() == Qt::Key_Escape) {
-			canvas_->cancelLineDrag();
+			canvas_->onEscape();
 			e->accept();
 			return;
 		}
@@ -1476,7 +1537,7 @@ private:
 		if (!still.empty())
 			canvas_->frame.save(QString::fromUtf8(still.c_str()));
 
-		hud_mask_set_cutout(ctx_, full, left, top, right, bottom);
+		hud_mask_set_cutout(ctx_, rel.c_str(), left, top, right, bottom);
 		bfree(full);
 		accept();
 	}
