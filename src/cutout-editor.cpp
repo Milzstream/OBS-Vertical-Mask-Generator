@@ -56,6 +56,24 @@ the Free Software Foundation; either version 2 of the License, or
 
 namespace {
 
+constexpr int kHistoryLimit = 32;
+
+bool editUndoKey(const QKeyEvent *e)
+{
+	const Qt::KeyboardModifiers mods =
+		e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+	return e->key() == Qt::Key_Z && mods == Qt::ControlModifier;
+}
+
+bool editRedoKey(const QKeyEvent *e)
+{
+	const Qt::KeyboardModifiers mods =
+		e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+	if (e->key() == Qt::Key_Y && mods == Qt::ControlModifier)
+		return true;
+	return e->key() == Qt::Key_Z && mods == (Qt::ControlModifier | Qt::ShiftModifier);
+}
+
 struct CaptureJob {
 	std::atomic<bool> cancelled{false};
 	std::atomic<bool> uiPending{false};
@@ -421,35 +439,22 @@ public:
 		update();
 	}
 
-	bool canUndo() const { return hasUndo_; }
+	bool canUndo() const { return !undo_.empty(); }
+	bool canRedo() const { return !redo_.empty(); }
 
-	void undo()
-	{
-		if (!hasUndo_ || undoMask_.isNull())
-			return;
-		cancelLineDrag();
-		mask = undoMask_;
-		linePts_ = undoLinePts_;
-		closedPoly_ = undoClosedPoly_;
-		hasUndo_ = false;
-		undoMask_ = QImage();
-		undoLinePts_.clear();
-		undoClosedPoly_.clear();
-		if (undoChanged)
-			undoChanged();
-		update();
-	}
+	void undo() { stepHistory(undo_, redo_); }
+
+	void redo() { stepHistory(redo_, undo_); }
 
 	void pushUndo()
 	{
 		if (mask.isNull())
 			return;
-		undoMask_ = mask.copy();
-		undoLinePts_ = linePts_;
-		undoClosedPoly_ = closedPoly_;
-		hasUndo_ = true;
-		if (undoChanged)
-			undoChanged();
+		redo_.clear();
+		undo_.push_back(captureHistory());
+		if (static_cast<int>(undo_.size()) > kHistoryLimit)
+			undo_.erase(undo_.begin());
+		notifyHistory();
 	}
 
 	bool hasPaint() const
@@ -727,7 +732,12 @@ protected:
 			e->accept();
 			return;
 		}
-		if (e->key() == Qt::Key_Z && e->modifiers() & Qt::ControlModifier) {
+		if (editRedoKey(e)) {
+			redo();
+			e->accept();
+			return;
+		}
+		if (editUndoKey(e)) {
 			undo();
 			e->accept();
 			return;
@@ -1092,10 +1102,13 @@ private:
 	QPoint lastPanWidget_;
 	QPointF lastSrc_;
 	QPointF cursorSrc_;
-	QImage undoMask_;
-	QPolygonF undoLinePts_;
-	QPolygonF undoClosedPoly_;
-	bool hasUndo_ = false;
+	struct HistorySnap {
+		QImage mask;
+		QPolygonF linePts;
+		QPolygonF closedPoly;
+	};
+	std::vector<HistorySnap> undo_;
+	std::vector<HistorySnap> redo_;
 	QTimer *dwell_ = nullptr;
 	bool lineDragging_ = false;
 	bool lineStraight_ = false;
@@ -1109,6 +1122,41 @@ private:
 	QPolygonF magicPath_;
 	QPolygonF closedPoly_;
 	QCursor fillCursor_ = make_bucket_cursor();
+
+	HistorySnap captureHistory() const
+	{
+		HistorySnap snap;
+		snap.mask = mask.copy();
+		snap.linePts = linePts_;
+		snap.closedPoly = closedPoly_;
+		return snap;
+	}
+
+	void restoreHistory(const HistorySnap &snap)
+	{
+		mask = snap.mask;
+		linePts_ = snap.linePts;
+		closedPoly_ = snap.closedPoly;
+	}
+
+	void notifyHistory()
+	{
+		if (undoChanged)
+			undoChanged();
+	}
+
+	void stepHistory(std::vector<HistorySnap> &from, std::vector<HistorySnap> &to)
+	{
+		if (from.empty() || mask.isNull())
+			return;
+		cancelLineDrag();
+		painting_ = false;
+		to.push_back(captureHistory());
+		restoreHistory(from.back());
+		from.pop_back();
+		notifyHistory();
+		update();
+	}
 };
 
 class CutoutDialog : public QDialog {
@@ -1148,7 +1196,9 @@ public:
 
 		auto *snap = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Snap")), this);
 		auto *undo = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Undo")), this);
+		auto *redo = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Redo")), this);
 		undo->setEnabled(false);
+		redo->setEnabled(false);
 		auto *refresh = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Refresh")), this);
 		auto *clear = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Clear")), this);
 		auto *ok = new QPushButton(QString::fromUtf8(obs_module_text("HUDMask.Editor.Apply")), this);
@@ -1185,7 +1235,10 @@ public:
 			brush->blockSignals(false);
 			updateBrushLabel();
 		};
-		canvas_->undoChanged = [this, undo]() { undo->setEnabled(canvas_->canUndo()); };
+		canvas_->undoChanged = [this, undo, redo]() {
+			undo->setEnabled(canvas_->canUndo());
+			redo->setEnabled(canvas_->canRedo());
+		};
 
 		auto applyMode = [this, maskBrush, eraseBrush, shape, brush, brushLabel, hintTool]() {
 			maskBrush->setChecked(!canvas_->erase);
@@ -1259,6 +1312,7 @@ public:
 		connect(zoom, &QSlider::valueChanged, this, [this](int v) { canvas_->setZoomPercent(v); });
 		connect(snap, &QPushButton::clicked, this, [this]() { canvas_->snapEdges(); });
 		connect(undo, &QPushButton::clicked, this, [this]() { canvas_->undo(); });
+		connect(redo, &QPushButton::clicked, this, [this]() { canvas_->redo(); });
 		connect(refresh, &QPushButton::clicked, this, [this]() {
 			setLive(false);
 			startCapture(false, false);
@@ -1296,6 +1350,7 @@ public:
 		tools->addWidget(zoom, 1);
 		tools->addWidget(snap);
 		tools->addWidget(undo);
+		tools->addWidget(redo);
 		tools->addWidget(refresh);
 		tools->addWidget(clear);
 		tools->addStretch();
@@ -1327,7 +1382,12 @@ protected:
 			e->accept();
 			return;
 		}
-		if (e->key() == Qt::Key_Z && e->modifiers() & Qt::ControlModifier) {
+		if (editRedoKey(e)) {
+			canvas_->redo();
+			e->accept();
+			return;
+		}
+		if (editUndoKey(e)) {
 			canvas_->undo();
 			e->accept();
 			return;
