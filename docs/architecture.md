@@ -22,7 +22,7 @@ Properties: Type, Canvas (if Scene), target, Same Masks, Draw mask…, Expand, F
 Draw mask editor
   live (or paused) view of the sampled source
   Mask / Erase · Circle · Square · Line · Shape · Fill · Magic Select
-  Snap Edges · Undo · Refresh · Clear
+  Snap Edges · Undo · Redo · Refresh · Clear
   Apply
         ↓
 source size = saved crop, scaled to the live filtered frame

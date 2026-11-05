@@ -15,7 +15,7 @@ C++ OBS plugin bootstrapped from [obs-plugintemplate](https://github.com/obsproj
 
 Properties: Type (source/scene), canvas when Type is Scene, target list, Same Masks, **Draw mask...**, Expand, Feather, Auto-hide, Fade, Match.
 
-The editor captures a frame. Tools: Mask/Erase with Circle or Square, Line, Shape, Fill, Magic Select, Snap Edges, Undo, Pause/Play, zoom/pan. Apply crops to the opaque bbox (32px pad) and writes `masks/<source-uuid>.png` under OBS plugin config. Crop and mask path stay in settings but are hidden on the properties sheet. Draw scales those insets to the live filtered size.
+The editor captures a frame. Tools: Mask/Erase with Circle or Square, Line, Shape, Fill, Magic Select, Snap Edges, Undo/Redo (32 steps, Ctrl+Z / Ctrl+Y), Pause/Play, zoom/pan. Apply crops to the opaque bbox (32px pad) and writes `masks/<source-uuid>.png` under OBS plugin config. Crop and mask path stay in settings but are hidden on the properties sheet. Draw scales those insets to the live filtered size.
 
 Auto-hide compares the processed mask (expand / feather) to the Draw mask still (`masks/<uuid>.ref`) with a small search for drift. Fade and Match sliders sit next to the checkbox. `presence.cpp` runs the shared downsample cycle (round-robin per target).
 
