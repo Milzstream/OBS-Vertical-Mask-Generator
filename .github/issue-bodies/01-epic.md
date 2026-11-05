@@ -45,4 +45,4 @@ If islands misbehave, **Split into N sources** or highlight each blob as its own
 
 ## Docs
 
-`docs/vision.md`, `architecture.md`, `feasibility.md`, `roadmap.md`, `manual-workflow.md`
+`docs/vision.md`, `architecture.md`, `feasibility.md`, `manual-workflow.md`, `roadmap.md`. GitHub milestones are the release plan.
