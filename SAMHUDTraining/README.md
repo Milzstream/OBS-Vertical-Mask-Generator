@@ -1,5 +1,7 @@
 # SAMHUDTraining
 
+Not the plan. Do not train or overwrite the shipped decoder. See `docs/roadmap.md`.
+
 One still, one mask per element. Subfolders are labels for you. Pairing uses the filename only.
 
 ## Layout

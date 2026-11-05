@@ -56,7 +56,7 @@ Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide
 
 ## Highlight tools (setup only)
 
-User paint is the mask. Optional **Snap Edges** walks the painted border and pulls it onto nearby frame contrast (any color). **Magic Select** asks MobileSAM to pick the element inside a rough loop. If the ONNX Runtime DLL or the models are missing, it falls back to edge snap (`mask_magic_shrinkwrap`). A pick the model runs and rejects is a miss, not a fallback. **Fill** floods an outline and swallows the ring. None of this runs at 60 fps.
+User paint is the mask. Optional **Snap Edges** walks the painted border and pulls it onto nearby frame contrast (any color). **Magic Select** asks MobileSAM to pick the element inside a rough loop. If the ONNX Runtime DLL or the models are missing, it falls back to edge snap (`mask_magic_shrinkwrap`). A pick the model runs and rejects is a miss, not a fallback. Replacing that call with a classical pick is the 0.6.0 plan in `docs/roadmap.md`. Do not train a new decoder. **Fill** floods an outline and swallows the ring. None of this runs at 60 fps.
 
 Crop = bounding box of remaining opaque pixels, padded 32px. Mask PNG is saved at crop size as `masks/<source-uuid>.png` under the plugin config directory. A duplicate copies that PNG and its still/reference beside its own uuid. At draw time the saved insets are scaled from the authored filtered size to the live filtered size, so a base-resolution change does not shift the cut-out. A missing mask draws nothing. A missing auto-hide reference does not adopt the live frame.
 
