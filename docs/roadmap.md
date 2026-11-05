@@ -52,7 +52,6 @@ The plugin does not know "menu". It only knows that saved crop. Two crops that a
 ## Not scheduled
 
 - [#75](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/75). Remove MobileSAM, the DLL, and the models after [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73) is the Magic Select people use. Do not delete `SAMHUDTraining` stills. Do not overwrite `data/models/mobilesam.decoder.onnx` in the meantime.
-- [#41](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/41). Auto-shrink inside the authored mask. Blocked until [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73) is trustworthy. Does not resize the scene item. `docs/vision.md` still lists auto-resize as a non-goal. Do not build this on Sobel shrinkwrap or MobileSAM.
 - macOS and Linux builds and installers
 - Color tolerance for flat panels. Fill floods an outline today.
 - Preview Expand and Feather in the editor, after [#69](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/69)
@@ -68,9 +67,10 @@ The plugin does not know "menu". It only knows that saved crop. Two crops that a
 - Full-frame autodetect with no highlight ([#13](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/13), closed)
 - Auto-placing items on the canvas
 - Auto-resize of the scene item when HUD chrome grows or shrinks
+- Auto-shrink inside the authored mask ([#41](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/41), closed)
 - Split into N sources (closed; one Source Cutout per element)
 - Telemetry, a paid tier, game memory, or injection
-- Closed [#43](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/43), [#44](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/44), and [#46](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/46). Do not reopen them.
+- Closed [#41](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/41), [#43](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/43), [#44](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/44), and [#46](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/46). Do not reopen them.
 
 ## Issues
 
@@ -79,5 +79,5 @@ The plugin does not know "menu". It only knows that saved crop. Two crops that a
 | [0.5.6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/1) | [#62](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/62)–[#71](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/71) |
 | [0.6.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/2) | [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73) |
 | [0.7.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/3) | [#74](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/74), after [#67](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/67) |
-| Not scheduled | [#75](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/75), [#41](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/41) |
-| Closed, do not reopen | [#43](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/43), [#44](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/44), [#46](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/46) |
+| Not scheduled | [#75](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/75) |
+| Closed, do not reopen | [#41](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/41), [#43](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/43), [#44](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/44), [#46](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/46) |
