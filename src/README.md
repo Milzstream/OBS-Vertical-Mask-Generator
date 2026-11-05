@@ -7,7 +7,8 @@ C++ OBS plugin bootstrapped from [obs-plugintemplate](https://github.com/obsproj
 | `plugin-main.cpp` | Module load/unload |
 | `hud-mask.cpp` | Source Cutout source: sample, crop, mask, expand/feather |
 | `cutout-editor.cpp` | Draw-mask editor (Qt) |
-| `mask-process.cpp` | Expand, feather, flood fill/erase, snap, magic shrinkwrap, crop bbox (no OBS/Qt) |
+| `mask-process.cpp` | Expand, feather, flood fill/erase, snap, edge-snap shrinkwrap, crop bbox (no OBS/Qt) |
+| `magic-sam.cpp` | MobileSAM pick for Magic Select. `Unavailable` (no DLL or models) is the editor's cue to edge-snap |
 | `presence.cpp` | Auto-hide shared cycle and still match |
 | `update-check.cpp` | GitHub release check on OBS launch |
 | `update-parse.hpp` | Version and GitHub JSON helpers (no OBS/Qt) |
@@ -15,7 +16,7 @@ C++ OBS plugin bootstrapped from [obs-plugintemplate](https://github.com/obsproj
 
 Properties: Type (source/scene), canvas when Type is Scene, target list, Same Masks, **Draw mask...**, Expand, Feather, Auto-hide, Fade, Match.
 
-The editor captures a frame. Tools: Mask/Erase with Circle or Square, Line, Shape, Fill, Magic Select, Snap Edges, Undo/Redo (32 steps, Ctrl+Z / Ctrl+Y), Pause/Play, zoom/pan. Apply crops to the opaque bbox (32px pad) and writes `masks/<source-uuid>.png` under OBS plugin config. Crop and mask path stay in settings but are hidden on the properties sheet. Draw scales those insets to the live filtered size.
+The editor captures a frame. Tools: Mask/Erase with Circle or Square, Line, Shape, Fill, Magic Select, Snap Edges, Undo/Redo (32 steps, Ctrl+Z / Ctrl+Y), Pause/Play, zoom/pan. Magic Select calls `magic_sam_select` off the UI thread. `Unavailable` falls back to `mask_magic_shrinkwrap`. `Rejected` or `Failed` is a miss. Apply crops to the opaque bbox (32px pad) and writes `masks/<source-uuid>.png` under OBS plugin config. Crop and mask path stay in settings but are hidden on the properties sheet. Draw scales those insets to the live filtered size.
 
 Auto-hide compares the processed mask (expand / feather) to the Draw mask still (`masks/<uuid>.ref`) with a small search for drift. Fade and Match sliders sit next to the checkbox. `presence.cpp` runs the shared downsample cycle (round-robin per target).
 

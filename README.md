@@ -57,6 +57,7 @@ Visual Studio 2022, CMake 3.28+, and a network connection the first time (the OB
 cmake --preset windows-x64
 cmake --build --preset windows-x64
 ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
+```
 
 Magic Select's element picker needs ONNX Runtime next to the plugin. The models ship in `data/models/`. Fetch the DLL once, then rebuild:
 
@@ -65,7 +66,6 @@ powershell -File .github/scripts/Fetch-MobileSAM.ps1
 ```
 
 That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin. Reconfigure before packaging an installer so the DLL is included. Without the DLL, Magic Select still works and uses the edge snap.
-```
 
 Merging a version bump in `buildspec.json` to `main` tags that version and publishes a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.
 
@@ -73,4 +73,4 @@ Merging a version bump in `buildspec.json` to `main` tags that version and publi
 
 [GPL-2.0-or-later](LICENSE). Required to link libobs. No telemetry, no paid tier.
 
-Design notes: [vision](docs/vision.md) · [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md)
+Design notes: [vision](docs/vision.md) · [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md). Agent notes: [AGENTS.md](AGENTS.md).
