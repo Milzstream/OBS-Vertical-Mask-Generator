@@ -221,13 +221,6 @@ void open_https(std::string url)
 	QDesktopServices::openUrl(qurl);
 }
 
-void close_obs()
-{
-	QWidget *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
-	if (parent)
-		QMetaObject::invokeMethod(parent, "close", Qt::QueuedConnection);
-}
-
 void show_update_failed(const std::string &page_url)
 {
 	if (g_download_box) {
@@ -483,8 +476,16 @@ bool launch_installer(const std::wstring &path)
 		obs_log(LOG_WARNING, "update check: could not start installer (%lu)", (unsigned long)GetLastError());
 		return false;
 	}
-	if (sei.hProcess)
-		CloseHandle(sei.hProcess);
+	if (!sei.hProcess)
+		return true;
+	const DWORD wait = WaitForSingleObject(sei.hProcess, 1500);
+	DWORD code = 0;
+	const bool exited = wait == WAIT_OBJECT_0 && GetExitCodeProcess(sei.hProcess, &code);
+	CloseHandle(sei.hProcess);
+	if (exited) {
+		obs_log(LOG_WARNING, "update check: installer exited immediately (%lu)", (unsigned long)code);
+		return false;
+	}
 	return true;
 }
 
@@ -521,7 +522,6 @@ void start_installer_update(const ReleaseInfo info)
 					show_update_failed(info.page_url.empty() ? info.download_url : info.page_url);
 					return;
 				}
-				close_obs();
 			},
 			Qt::QueuedConnection);
 	});
@@ -560,7 +560,6 @@ void show_update_dialog(const ReleaseInfo info)
 		}
 #endif
 		open_https(!info.download_url.empty() ? info.download_url : info.page_url);
-		close_obs();
 	} else if (box.clickedButton() == skip) {
 		obs_data_t *state = load_state();
 		obs_data_set_string(state, "skip_version", info.tag.c_str());

@@ -48,6 +48,7 @@ constexpr const char *k_feather = "feather";
 constexpr const char *k_auto_hide = "auto_hide";
 constexpr const char *k_fade = "auto_hide_fade";
 constexpr const char *k_match = "auto_hide_match";
+constexpr int k_mask_crop_pad = 32;
 
 gs_effect_t *mask_effect = nullptr;
 
@@ -86,37 +87,49 @@ obs_canvas_t *find_canvas_by_uuid(const char *uuid)
 	return obs_get_main_canvas();
 }
 
-obs_source_t *acquire_target(hud_mask *ctx)
+obs_source_t *resolve_named(hud_mask *ctx)
 {
-	if (ctx->target)
-		return obs_weak_source_get_source(ctx->target);
-
-	if (ctx->target_name.empty())
+	if (!ctx)
+		return nullptr;
+	std::string name;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		name = ctx->target_name;
+	}
+	if (name.empty())
 		return nullptr;
 
 	obs_source_t *source = nullptr;
-	if (!ctx->canvas_uuid.empty()) {
+	if (ctx->target_scene && !ctx->canvas_uuid.empty()) {
 		obs_canvas_t *canvas = find_canvas_by_uuid(ctx->canvas_uuid.c_str());
 		if (canvas) {
-			obs_scene_t *scene = obs_canvas_get_scene_by_name(canvas, ctx->target_name.c_str());
+			obs_scene_t *scene = obs_canvas_get_scene_by_name(canvas, name.c_str());
 			obs_canvas_release(canvas);
 			if (scene) {
 				source = obs_source_get_ref(obs_scene_get_source(scene));
 				obs_scene_release(scene);
 			}
 		}
+	} else {
+		source = obs_get_source_by_name(name.c_str());
 	}
-	if (!source)
-		source = obs_get_source_by_name(ctx->target_name.c_str());
-	if (!source)
-		return nullptr;
-
-	if (source == ctx->self) {
-		obs_source_release(source);
+	if (!source || source == ctx->self) {
+		if (source)
+			obs_source_release(source);
 		return nullptr;
 	}
-
 	return source;
+}
+
+obs_source_t *acquire_target(hud_mask *ctx)
+{
+	if (!ctx)
+		return nullptr;
+	if (ctx->target) {
+		if (obs_source_t *live = obs_weak_source_get_source(ctx->target))
+			return live;
+	}
+	return resolve_named(ctx);
 }
 
 void release_target(hud_mask *ctx, obs_source_t *source)
@@ -139,15 +152,19 @@ void set_target(hud_mask *ctx, const char *name)
 		ctx->target = nullptr;
 	}
 
-	ctx->target_name = name ? name : "";
+	const std::string next_name = name ? name : "";
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		ctx->target_name = next_name;
+	}
 
-	if (ctx->target_name.empty()) {
+	if (next_name.empty()) {
 		if (prev)
 			obs_source_release(prev);
 		return;
 	}
 
-	obs_source_t *next = obs_get_source_by_name(ctx->target_name.c_str());
+	obs_source_t *next = resolve_named(ctx);
 	if (!next || next == ctx->self) {
 		if (next)
 			obs_source_release(next);
@@ -157,10 +174,11 @@ void set_target(hud_mask *ctx, const char *name)
 	}
 
 	if (!obs_source_add_active_child(ctx->self, next)) {
-		obs_log(LOG_WARNING, "refusing target '%s' (cycle)", ctx->target_name.c_str());
+		obs_log(LOG_WARNING, "refusing target '%s' (cycle)", next_name.c_str());
 		obs_source_release(next);
 		if (prev)
 			obs_source_release(prev);
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
 		ctx->target_name.clear();
 		return;
 	}
@@ -181,6 +199,7 @@ void free_mask_texture(hud_mask *ctx)
 		ctx->mask_tex = nullptr;
 	}
 	obs_leave_graphics();
+	std::lock_guard<std::mutex> lock(ctx->data_mu);
 	ctx->mask_loaded = false;
 }
 
@@ -302,36 +321,50 @@ void claim_mask_files(hud_mask *ctx, obs_data_t *settings)
 void load_mask_texture(hud_mask *ctx, const char *path)
 {
 	const std::string resolved = resolve_stored_mask_path(path);
-	const bool path_changed = !paths_equal(resolved, ctx->mask_path);
-	const int prev_w = ctx->mask_w;
-	const int prev_h = ctx->mask_h;
-	free_mask_texture(ctx);
-	ctx->mask_path = resolved;
-	ctx->mask_gray.clear();
-	ctx->mask_w = ctx->mask_h = 0;
-	if (path_changed) {
-		ctx->mask_failed = false;
-		ctx->ref_missing_logged = false;
+	bool path_changed = false;
+	int prev_w = 0;
+	int prev_h = 0;
+	std::string mask_path;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		path_changed = !paths_equal(resolved, ctx->mask_path);
+		prev_w = ctx->mask_w;
+		prev_h = ctx->mask_h;
+		ctx->mask_path = resolved;
+		ctx->mask_gray.clear();
+		ctx->mask_w = ctx->mask_h = 0;
+		if (path_changed) {
+			ctx->mask_failed = false;
+			ctx->ref_missing_logged = false;
+		}
+		mask_path = ctx->mask_path;
 	}
-	if (ctx->mask_path.empty()) {
+	free_mask_texture(ctx);
+	if (mask_path.empty()) {
 		hud_mask_presence_clear_ref(ctx);
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
 		ctx->mask_failed = false;
 		return;
 	}
 
-	QImage img(QString::fromUtf8(ctx->mask_path.c_str()));
+	QImage img(QString::fromUtf8(mask_path.c_str()));
 	if (img.isNull()) {
-		if (!path_changed) {
-			ctx->mask_w = prev_w;
-			ctx->mask_h = prev_h;
+		bool log_fail = false;
+		{
+			std::lock_guard<std::mutex> lock(ctx->data_mu);
+			if (!path_changed) {
+				ctx->mask_w = prev_w;
+				ctx->mask_h = prev_h;
+			}
+			if (!ctx->mask_failed) {
+				ctx->mask_failed = true;
+				log_fail = true;
+			}
 		}
-		if (!ctx->mask_failed) {
-			obs_log(LOG_WARNING, "failed to load mask '%s'", ctx->mask_path.c_str());
-			ctx->mask_failed = true;
-		}
+		if (log_fail)
+			obs_log(LOG_WARNING, "failed to load mask '%s'", mask_path.c_str());
 		return;
 	}
-	ctx->mask_failed = false;
 	img = img.convertToFormat(QImage::Format_Grayscale8);
 	const int w = img.width();
 	const int h = img.height();
@@ -342,28 +375,60 @@ void load_mask_texture(hud_mask *ctx, const char *path)
 	for (int y = 0; y < h; y++)
 		memcpy(gray.data() + static_cast<size_t>(y) * w, img.constScanLine(y), static_cast<size_t>(w));
 
-	ctx->mask_gray = gray;
-	ctx->mask_w = w;
-	ctx->mask_h = h;
+	int expand = 0;
+	int feather = 0;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		ctx->mask_failed = false;
+		ctx->mask_gray = gray;
+		ctx->mask_w = w;
+		ctx->mask_h = h;
+		expand = std::clamp(ctx->expand, -k_mask_crop_pad, k_mask_crop_pad);
+		feather = std::clamp(ctx->feather, 0, k_mask_crop_pad);
+		ctx->expand = expand;
+		ctx->feather = feather;
+	}
 	hud_mask_presence_load_ref(ctx);
 
-	if (ctx->expand != 0 || ctx->feather > 0) {
+	if (expand != 0 || feather > 0) {
 		mask_binarize(gray);
-		if (ctx->expand != 0)
-			mask_expand(gray, w, h, ctx->expand);
-		if (ctx->feather > 0)
-			mask_feather(gray, w, h, ctx->feather);
+		if (expand != 0)
+			mask_expand(gray, w, h, expand);
+		if (feather > 0)
+			mask_feather(gray, w, h, feather);
 	}
 
 	const uint8_t *slices[1] = {gray.data()};
 	obs_enter_graphics();
 	ctx->mask_tex = gs_texture_create(static_cast<uint32_t>(w), static_cast<uint32_t>(h), GS_R8, 1, slices, 0);
 	obs_leave_graphics();
+	std::lock_guard<std::mutex> lock(ctx->data_mu);
 	ctx->mask_loaded = ctx->mask_tex != nullptr;
 }
 
 void update_size(hud_mask *ctx)
 {
+	int crop_left = 0;
+	int crop_top = 0;
+	int crop_right = 0;
+	int crop_bottom = 0;
+	int mask_w = 0;
+	int mask_h = 0;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		if (ctx->mask_path.empty() || !ctx->mask_loaded || ctx->mask_w < 1 || ctx->mask_h < 1) {
+			ctx->draw_left = ctx->draw_top = 0;
+			ctx->cx = ctx->cy = 0;
+			ctx->src_cx = ctx->src_cy = 0;
+			return;
+		}
+		crop_left = ctx->crop_left;
+		crop_top = ctx->crop_top;
+		crop_right = ctx->crop_right;
+		crop_bottom = ctx->crop_bottom;
+		mask_w = ctx->mask_w;
+		mask_h = ctx->mask_h;
+	}
 	obs_source_t *target = acquire_target(ctx);
 	if (!target) {
 		ctx->src_cx = ctx->src_cy = ctx->cx = ctx->cy = 0;
@@ -374,15 +439,14 @@ void update_size(hud_mask *ctx)
 	ctx->src_cy = obs_source_get_height(target);
 	obs_source_release(target);
 
-	const MaskScale sc = mask_scale_cutout(static_cast<int>(ctx->src_cx), static_cast<int>(ctx->src_cy),
-					       ctx->crop_left, ctx->crop_top, ctx->crop_right, ctx->crop_bottom,
-					       ctx->mask_w, ctx->mask_h);
+	const MaskScale sc = mask_scale_cutout(static_cast<int>(ctx->src_cx), static_cast<int>(ctx->src_cy), crop_left,
+					       crop_top, crop_right, crop_bottom, mask_w, mask_h);
 	if (sc.empty) {
 		ctx->draw_left = ctx->draw_top = 0;
 		ctx->cx = ctx->cy = 0;
-		if (ctx->mask_loaded && ctx->src_cx > 0 && ctx->src_cy > 0 && !ctx->scale_logged) {
-			const int auth_w = std::max(ctx->crop_left, 0) + ctx->mask_w + std::max(ctx->crop_right, 0);
-			const int auth_h = std::max(ctx->crop_top, 0) + ctx->mask_h + std::max(ctx->crop_bottom, 0);
+		if (ctx->src_cx > 0 && ctx->src_cy > 0 && !ctx->scale_logged) {
+			const int auth_w = std::max(crop_left, 0) + mask_w + std::max(crop_right, 0);
+			const int auth_h = std::max(crop_top, 0) + mask_h + std::max(crop_bottom, 0);
 			obs_log(LOG_WARNING, "cutout scale empty (live %ux%u, authored %dx%d)", ctx->src_cx, ctx->src_cy,
 				auth_w, auth_h);
 			ctx->scale_logged = true;
@@ -439,31 +503,44 @@ void hud_mask_update(void *data, obs_data_t *settings)
 	auto *ctx = static_cast<hud_mask *>(data);
 	const char *canvas = obs_data_get_string(settings, k_canvas);
 	ctx->canvas_uuid = canvas ? canvas : "";
+	const char *kind = obs_data_get_string(settings, k_kind);
+	ctx->target_scene = kind && strcmp(kind, "scene") == 0;
 	set_target(ctx, obs_data_get_string(settings, k_source));
-	ctx->crop_left = static_cast<int>(obs_data_get_int(settings, k_crop_left));
-	ctx->crop_top = static_cast<int>(obs_data_get_int(settings, k_crop_top));
-	ctx->crop_right = static_cast<int>(obs_data_get_int(settings, k_crop_right));
-	ctx->crop_bottom = static_cast<int>(obs_data_get_int(settings, k_crop_bottom));
-	ctx->expand = static_cast<int>(obs_data_get_int(settings, k_expand));
-	ctx->feather = static_cast<int>(obs_data_get_int(settings, k_feather));
-	ctx->auto_hide = obs_data_get_bool(settings, k_auto_hide);
-	ctx->fade_ms = static_cast<int>(obs_data_get_int(settings, k_fade));
-	ctx->match_pct = static_cast<int>(obs_data_get_int(settings, k_match));
-	if (ctx->fade_ms < 0)
-		ctx->fade_ms = 0;
-	if (ctx->fade_ms > 2000)
-		ctx->fade_ms = 2000;
-	if (ctx->match_pct < 0)
-		ctx->match_pct = 0;
-	if (ctx->match_pct > 100)
-		ctx->match_pct = 100;
+	int fade_ms = static_cast<int>(obs_data_get_int(settings, k_fade));
+	int match_pct = static_cast<int>(obs_data_get_int(settings, k_match));
+	int expand = static_cast<int>(obs_data_get_int(settings, k_expand));
+	int feather = static_cast<int>(obs_data_get_int(settings, k_feather));
+	if (fade_ms < 0)
+		fade_ms = 0;
+	if (fade_ms > 2000)
+		fade_ms = 2000;
+	if (match_pct < 0)
+		match_pct = 0;
+	if (match_pct > 100)
+		match_pct = 100;
+	expand = std::clamp(expand, -k_mask_crop_pad, k_mask_crop_pad);
+	feather = std::clamp(feather, 0, k_mask_crop_pad);
+	const bool auto_hide = obs_data_get_bool(settings, k_auto_hide);
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		ctx->crop_left = static_cast<int>(obs_data_get_int(settings, k_crop_left));
+		ctx->crop_top = static_cast<int>(obs_data_get_int(settings, k_crop_top));
+		ctx->crop_right = static_cast<int>(obs_data_get_int(settings, k_crop_right));
+		ctx->crop_bottom = static_cast<int>(obs_data_get_int(settings, k_crop_bottom));
+		ctx->expand = expand;
+		ctx->feather = feather;
+		ctx->auto_hide = auto_hide;
+		ctx->fade_ms = fade_ms;
+		ctx->match_pct = match_pct;
+		if (!auto_hide)
+			ctx->ref_capture_pending = false;
+	}
 	claim_mask_files(ctx, settings);
 	load_mask_texture(ctx, obs_data_get_string(settings, k_mask_path));
-	if (!ctx->auto_hide) {
+	if (!auto_hide) {
 		ctx->presence_shown = true;
 		ctx->draw_alpha = 1.0f;
 		ctx->presence_streak = 0;
-		ctx->ref_capture_pending = false;
 	}
 	update_size(ctx);
 }
@@ -712,8 +789,13 @@ bool draw_mask_clicked(obs_properties_t *props, obs_property_t *, void *priv)
 	auto *ctx = static_cast<hud_mask *>(priv);
 	hud_mask_open_editor(ctx);
 	if (props) {
-		const bool has_mask = ctx && !ctx->mask_path.empty();
-		const bool on = ctx && ctx->auto_hide;
+		bool has_mask = false;
+		bool on = false;
+		if (ctx) {
+			std::lock_guard<std::mutex> lock(ctx->data_mu);
+			has_mask = !ctx->mask_path.empty();
+			on = ctx->auto_hide;
+		}
 		set_mask_controls_enabled(props, has_mask, on);
 	}
 	return true;
@@ -780,9 +862,17 @@ obs_properties_t *hud_mask_properties(void *data)
 
 	obs_properties_add_button2(props, "draw_mask", obs_module_text("HUDMask.DrawMask"), draw_mask_clicked, ctx);
 
-	const bool has_mask = ctx && !ctx->mask_path.empty();
-	obs_property_t *expand = obs_properties_add_int(props, k_expand, obs_module_text("HUDMask.Expand"), -48, 48, 1);
-	obs_property_t *feather = obs_properties_add_int(props, k_feather, obs_module_text("HUDMask.Feather"), 0, 48, 1);
+	bool has_mask = false;
+	bool hide_on = false;
+	if (ctx) {
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		has_mask = !ctx->mask_path.empty();
+		hide_on = ctx->auto_hide;
+	}
+	obs_property_t *expand = obs_properties_add_int(props, k_expand, obs_module_text("HUDMask.Expand"), -k_mask_crop_pad,
+						       k_mask_crop_pad, 1);
+	obs_property_t *feather = obs_properties_add_int(props, k_feather, obs_module_text("HUDMask.Feather"), 0,
+						       k_mask_crop_pad, 1);
 	obs_property_int_set_suffix(expand, " px");
 	obs_property_int_set_suffix(feather, " px");
 	obs_property_set_long_description(expand, obs_module_text("HUDMask.Expand.Help"));
@@ -801,7 +891,6 @@ obs_properties_t *hud_mask_properties(void *data)
 	obs_property_t *match = obs_properties_add_int_slider(props, k_match, obs_module_text("HUDMask.AutoHide.Match"), 0,
 							     100, 1);
 	obs_property_set_long_description(match, obs_module_text("HUDMask.AutoHide.Match.Help"));
-	const bool hide_on = ctx && ctx->auto_hide;
 	set_mask_controls_enabled(props, has_mask, hide_on);
 
 	return props;
@@ -821,7 +910,12 @@ void hud_mask_tick(void *data, float seconds)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
 	update_size(ctx);
-	if (!ctx->auto_hide) {
+	bool auto_hide = false;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		auto_hide = ctx->auto_hide;
+	}
+	if (!auto_hide) {
 		ctx->presence_shown = true;
 		ctx->draw_alpha = 1.0f;
 		ctx->presence_streak = 0;
@@ -902,11 +996,30 @@ void hud_mask_render(void *data, gs_effect_t *)
 	gs_blend_state_pop();
 
 	gs_texture_t *tex = gs_texrender_get_texture(ctx->texrender);
-	gs_texture_t *mask = ctx->mask_loaded ? ctx->mask_tex : nullptr;
-	const float opacity = ctx->auto_hide ? ctx->draw_alpha : 1.0f;
+	bool hide = false;
+	bool loaded = false;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		hide = ctx->auto_hide;
+		loaded = ctx->mask_loaded;
+	}
+	gs_texture_t *mask = loaded ? ctx->mask_tex : nullptr;
+	const float opacity = hide ? ctx->draw_alpha : 1.0f;
 	draw_texture(tex, ctx->cx, ctx->cy, mask, opacity);
 
 	ctx->rendering = false;
+	obs_source_release(target);
+}
+
+void hud_mask_enum_active_sources(void *data, obs_source_enum_proc_t enum_callback, void *param)
+{
+	auto *ctx = static_cast<hud_mask *>(data);
+	if (!ctx || !enum_callback)
+		return;
+	obs_source_t *target = acquire_target(ctx);
+	if (!target)
+		return;
+	enum_callback(ctx->self, target, param);
 	obs_source_release(target);
 }
 
@@ -926,6 +1039,7 @@ obs_source_info make_info()
 	info.get_height = hud_mask_height;
 	info.video_tick = hud_mask_tick;
 	info.video_render = hud_mask_render;
+	info.enum_active_sources = hud_mask_enum_active_sources;
 	info.icon_type = OBS_ICON_TYPE_CUSTOM;
 	info.get_dark_icon = hud_mask_icon_dark;
 	info.get_light_icon = hud_mask_icon_light;
