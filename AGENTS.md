@@ -20,7 +20,7 @@ Existing scenes and saved masks depend on these. The display name is Source Cuto
 - OBS source, properties, GPU draw: `src/hud-mask.cpp`
 - Draw-mask Qt editor: `src/cutout-editor.cpp`. It is already large. Do not put pure image math there.
 - Mask math with no OBS or Qt: `src/mask-process.cpp`, plus a case in `tests/mask-process-test.cpp`. Version and GitHub JSON helpers stay in `src/update-parse.hpp` and are tested from that same file.
-- MobileSAM: `src/magic-sam.cpp`. Missing DLL or models return `Unavailable`. The editor then edge-snaps with `mask_magic_shrinkwrap`. `Rejected` or `Failed` is a miss, not a fallback.
+- MobileSAM: `src/magic-sam.cpp`. Missing DLL or models return `Unavailable`. The editor then edge-snaps with `mask_magic_shrinkwrap`. `Rejected` or `Failed` is a miss, not a fallback. Do not train or replace the decoder. The plan is a classical Magic Select; see `docs/roadmap.md`.
 - Auto-hide cycle: `src/presence.cpp`
 - Update check: `src/update-check.cpp`. Set `HUD_MASK_SKIP_UPDATE=1` while iterating.
 

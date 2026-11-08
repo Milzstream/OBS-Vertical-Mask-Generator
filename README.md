@@ -73,4 +73,4 @@ Merging a version bump in `buildspec.json` to `main` tags that version and publi
 
 [GPL-2.0-or-later](LICENSE). Required to link libobs. No telemetry, no paid tier.
 
-Design notes: [vision](docs/vision.md) · [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md). Agent notes: [AGENTS.md](AGENTS.md).
+Design notes: [vision](docs/vision.md) · [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md). The roadmap is the release plan, tracked as GitHub milestones. Agent notes: [AGENTS.md](AGENTS.md).
