@@ -153,3 +153,18 @@ void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height, const 
 
 /* Reject a prompted pick that is unsure, a sliver, or the whole crop. */
 bool mask_magic_pick_ok(int mask_pixels, int crop_pixels, float iou);
+
+/* GrabCut pick inside a loop (Rother et al. 2004): outside the loop is hard
+ * background, inside is probable foreground, 5-component GMMs per side and
+ * iterated graph cuts. Does not call ONNX. Misses leave gray empty. */
+enum class MaskMagicPickStatus { Ok, NoEdge, TooSmall, TooBig, Failed };
+
+struct MaskMagicPick {
+	MaskMagicPickStatus status = MaskMagicPickStatus::Failed;
+	std::vector<uint8_t> gray;
+	int width = 0;
+	int height = 0;
+};
+
+MaskMagicPick mask_magic_pick(const uint8_t *bgra, int stride, int width, int height,
+			      const std::vector<MaskPoint> &loop);

@@ -5,9 +5,8 @@
 #include <cstdint>
 #include <vector>
 
-/* Prompted pick of the element inside a loop. The loop is a prompt, not a
- * shape to preserve. Runs off the OBS render thread. Unavailable means the
- * ONNX runtime or models are not next to the plugin — caller may fall back.
+/* Prompted MobileSAM pick. Magic Select does not call this. Kept until the
+ * ONNX stack is removed. Unavailable means the runtime or models are missing.
  * Rejected means the model ran and the pick was not trusted. */
 
 enum class MagicSamStatus { Ok, Unavailable, Rejected, Failed };

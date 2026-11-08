@@ -33,7 +33,7 @@ The installer writes under `%ProgramData%\obs-studio\plugins\vertical-hud-mask\`
    - **Line** — drag to draw. Pause to straighten. Size sets the width. Escape cancels the stroke in progress.
    - **Shape** — hold to place, pause to straighten. Click near the start or press Enter to close. Escape drops an open chain.
    - **Fill** — click inside an outline (any brush or a closed shape).
-   - **Magic Select** — draw a rough loop around the element and release. If the MobileSAM model is installed it picks the element inside the loop. Otherwise it falls back to the old edge snap.
+   - **Magic Select** — draw a rough loop around the element and release. It picks a hard-edged element inside the loop. A miss leaves the mask unchanged and says why. Snap Edges can clean the result.
    - **Snap Edges** pulls a painted silhouette onto nearby contrast in the frame.
     - Ctrl+wheel or the zoom slider to zoom, Ctrl+0 for 100%. Space or middle-mouse to pan. Pause/Play freezes or resumes the live frame. Undo (Ctrl+Z) and Redo (Ctrl+Y or Ctrl+Shift+Z) keep the last 32 edits. Refresh, Clear, then **Apply**.
 
@@ -59,13 +59,13 @@ cmake --build --preset windows-x64
 ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
 ```
 
-Magic Select's element picker needs ONNX Runtime next to the plugin. The models ship in `data/models/`. Fetch the DLL once, then rebuild:
+Magic Select does not need ONNX Runtime. The models and fetch script stay until that stack is removed. Fetch the DLL only for the leftover picker, then rebuild:
 
 ```
 powershell -File .github/scripts/Fetch-MobileSAM.ps1
 ```
 
-That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin. Reconfigure before packaging an installer so the DLL is included. Without the DLL, Magic Select still works and uses the edge snap.
+That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin when it is present. Reconfigure before packaging an installer so the DLL is included. Magic Select works without it.
 
 Merging a version bump in `buildspec.json` to `main` tags that version and publishes a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.
 

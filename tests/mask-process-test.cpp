@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -825,6 +826,214 @@ int main()
 		CHECK(!mask_magic_pick_ok(8, 10000, 0.9f));
 		CHECK(!mask_magic_pick_ok(9900, 10000, 0.9f));
 		CHECK(mask_magic_pick_ok(2000, 10000, 0.8f));
+	}
+
+	auto square_loop = [](float x0, float y0, float x1, float y1) {
+		return std::vector<MaskPoint>{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+	};
+	auto paint_bgra = [](std::vector<uint8_t> &bgra, int w, int x0, int y0, int x1, int y1, uint8_t r, uint8_t g,
+			     uint8_t b) {
+		for (int y = y0; y <= y1; y++) {
+			uint8_t *row = bgra.data() + static_cast<size_t>(y) * w * 4;
+			for (int x = x0; x <= x1; x++) {
+				row[x * 4 + 0] = b;
+				row[x * 4 + 1] = g;
+				row[x * 4 + 2] = r;
+				row[x * 4 + 3] = 255;
+			}
+		}
+	};
+
+	{
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 16, 16, 47, 47, 240, 240, 240);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		CHECK(static_cast<int>(pick.gray.size()) == w * h);
+		int covered = 0;
+		int outside = 0;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const bool on = pick.gray[static_cast<size_t>(y) * w + x] >= 128;
+				if (x >= 16 && x <= 47 && y >= 16 && y <= 47) {
+					if (on)
+						covered++;
+				} else if (on) {
+					outside++;
+				}
+			}
+		}
+		CHECK(covered >= 900);
+		CHECK(outside < 40);
+
+		std::vector<uint8_t> lum(static_cast<size_t>(w) * h);
+		for (int i = 0; i < w * h; i++) {
+			const int b = bgra[static_cast<size_t>(i) * 4 + 0];
+			const int g = bgra[static_cast<size_t>(i) * 4 + 1];
+			const int r = bgra[static_cast<size_t>(i) * 4 + 2];
+			lum[static_cast<size_t>(i)] = static_cast<uint8_t>((77 * r + 150 * g + 29 * b) >> 8);
+		}
+		std::vector<uint8_t> snapped;
+		CHECK(mask_snap_edges(pick.gray, lum, w, h, 8, snapped));
+	}
+
+	{
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 16, 16, 47, 47, 240, 240, 240);
+		paint_bgra(bgra, w, 28, 28, 35, 35, 0, 0, 0);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		CHECK(pick.gray[static_cast<size_t>(30) * w + 30] == 255);
+		CHECK(pick.gray[static_cast<size_t>(20) * w + 20] == 255);
+		CHECK(pick.gray[static_cast<size_t>(4) * w + 4] == 0);
+	}
+
+	{
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 80);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::NoEdge);
+		CHECK(pick.gray.empty());
+	}
+
+	{
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 30, 30, 32, 32, 255, 255, 255);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::TooSmall);
+		CHECK(pick.gray.empty());
+	}
+
+	{
+		const int w = 280;
+		const int h = 280;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 9, 9, 270, 270, 255, 255, 255);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 271, 271));
+		CHECK(pick.status == MaskMagicPickStatus::TooBig);
+		CHECK(pick.gray.empty());
+	}
+
+	/* GrabCut pick: cases the previous median/threshold picker failed. */
+
+	auto coverage = [](const MaskMagicPick &pick, int w, int x0, int y0, int x1, int y1, int h) {
+		if (pick.gray.empty())
+			return std::pair<int, int>(0, 0);
+		int covered = 0;
+		int outside = 0;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const bool on = pick.gray[static_cast<size_t>(y) * w + x] >= 128;
+				if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+					if (on)
+						covered++;
+				} else if (on) {
+					outside++;
+				}
+			}
+		}
+		return std::pair<int, int>(covered, outside);
+	};
+
+	{
+		/* (a) Smooth gradient foreground, black-to-white on mid-grey: the
+		 * old picker thresholded against the background median, splitting
+		 * the ramp and picking at most one side of it. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 0, 0, 63, 63, 128, 128, 128);
+		for (int y = 16; y <= 47; y++) {
+			for (int x = 16; x <= 47; x++) {
+				uint8_t *px = bgra.data() + (static_cast<size_t>(y) * w + x) * 4;
+				const uint8_t v = static_cast<uint8_t>((x - 16) * 255 / 31);
+				px[0] = v;
+				px[1] = v;
+				px[2] = v;
+				px[3] = 255;
+			}
+		}
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 40);
+	}
+
+	{
+		/* (b) Two-tone checker foreground (luma MAD is ~127, far above the
+		 * old picker's 40 gate) on a mid-grey background. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 0, 0, 63, 63, 128, 128, 128);
+		for (int y = 16; y <= 47; y++) {
+			for (int x = 16; x <= 47; x++) {
+				const bool white = ((x - 16) / 8 + (y - 16) / 8) % 2 == 0;
+				uint8_t *px = bgra.data() + (static_cast<size_t>(y) * w + x) * 4;
+				px[0] = white ? 255 : 0;
+				px[1] = white ? 255 : 0;
+				px[2] = white ? 255 : 0;
+				px[3] = 255;
+			}
+		}
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 40);
+	}
+
+	{
+		/* (c) Colour-only edge: red (255,0,0) and green (0,131,0) have the
+		 * same luma (76), so a luma Sobel sees no edge at all. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 0, 0, 63, 63, 0, 131, 0);
+		paint_bgra(bgra, w, 16, 16, 47, 47, 255, 0, 0);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 40);
+	}
+
+	{
+		/* (d) Non-uniform (gradient) background, solid object: the outside
+		 * ring has no single median colour. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				uint8_t *px = bgra.data() + (static_cast<size_t>(y) * w + x) * 4;
+				px[0] = 100;
+				px[1] = static_cast<uint8_t>(30 + y * 2);
+				px[2] = static_cast<uint8_t>(30 + x * 2);
+				px[3] = 255;
+			}
+		}
+		paint_bgra(bgra, w, 16, 16, 47, 47, 240, 220, 0);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 80);
+	}
+
+	{
+		std::vector<uint8_t> bgra(64, 0);
+		const auto short_loop = std::vector<MaskPoint>{{0, 0}, {1, 0}};
+		CHECK(mask_magic_pick(nullptr, 16, 8, 8, square_loop(1, 1, 6, 6)).status == MaskMagicPickStatus::Failed);
+		CHECK(mask_magic_pick(bgra.data(), 32, 8, 8, short_loop).status == MaskMagicPickStatus::Failed);
 	}
 
 	if (g_fails) {

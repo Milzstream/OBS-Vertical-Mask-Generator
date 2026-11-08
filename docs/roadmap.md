@@ -1,49 +1,34 @@
 # Roadmap
 
-Release plan is GitHub milestones. Tag the version when that milestone's issues are done. Dates are not promises. Shipped through 0.5.5.
+Release plan is GitHub milestones. Tag the version when that milestone's issues are done. Dates are not promises. Shipped through 0.5.5. 0.6.0 is the next tag.
 
 ## Shipped
 
-Through [0.5.5](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/releases/tag/0.5.5).
+Through 0.5.5.
 
 - Sample any source or scene, masked draw, place and scale the scene item. No auto-layout.
 - Draw mask: paint, erase, line, shape, fill, Magic Select, Snap Edges, pause, undo/redo of the last 32 edits.
 - Expand and Feather on the properties pane. Crop pad is 32px.
 - Optional auto-hide, off by default, labeled experimental ([#20](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/20), 0.3.0). One shared cycle, one readback per target, about 10 Hz. It compares edges to one Apply still. It is not a model.
-- Magic Select with a finetuned MobileSAM decoder (0.4.0, [#45](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/45)). A missing model or DLL falls back to edge snap. That call is what [0.6.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/2) replaces.
+- Magic Select with a finetuned MobileSAM decoder (0.4.0, [#45](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/45)). 0.6.0 replaces that call. The ONNX stack stays until [#75](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/75).
 - Windows installer, portable zip, launch-time update check. OBS closes for the install and reopens after.
 - Works on a vertical canvas and on a vanilla OBS scene.
 
 The cut-out always works with auto-hide off. No telemetry. Windows only.
 
-## 0.5.6 — correctness
-
-[Milestone](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/1). Bugs only. No new tools. MobileSAM still ships, so the ONNX leak stays here.
-
-| Issue | What is wrong |
-| --- | --- |
-| [#62](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/62) | No mask, or Clear + Apply, draws the whole source. A missing mask should draw nothing. |
-| [#63](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/63) | After a restart, a hidden target is not kept active, so the cutout goes black. |
-| [#64](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/64) | A scene on an extra canvas can bind the main-canvas scene of the same name. |
-| [#65](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/65) | Undo after a resolution change restores the old-size mask. |
-| [#66](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/66) | Fill on a freehand Shape fills the chord, not the painted curve. |
-| [#67](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/67) | Auto-hide can score a cutout after it has been destroyed. [#74](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/74) waits on this. |
-| [#68](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/68) | A silent update can close OBS and then abort, leaving OBS shut with the old plugin. |
-| [#69](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/69) | Expand and Feather go to 48. The saved mask only has 32px of padding, so the extra is clipped. |
-| [#70](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/70) | Snap Edges does not show the success or failure string that already exists. |
-| [#71](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/71) | Magic Select retries and leaks ONNX sessions when the model fails to load. |
-
 ## 0.6.0 — Magic Select without a model
 
-[Milestone](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/2). [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73).
+[Milestone](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/2). [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73). Includes the 0.5.6 correctness fixes ([#62](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/62)–[#71](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/71)). There is no 0.5.6 tag.
 
-Keep the lasso and the name. On release, a classical pick (color and edges) runs inside the loop on a paused frame. No ONNX call. A miss does not replace the mask. Snap Edges stays the refine. Transparent and glowing HUD can still miss. Paint and erase stay the escape hatch.
+A missing mask draws nothing. A hidden target stays active. Scene lookup stays on its canvas. Undo scales with the frame. Freehand fill follows the curve. Auto-hide does not score a destroyed cutout. A silent update does not close OBS. Expand and Feather stay inside the 32px pad. Snap Edges reports success or failure. A failed Magic Select load does not leak sessions.
+
+Keep the lasso and the name. On release, a classical pick (color and edges) runs inside the loop on a paused frame. No ONNX call. A miss does not replace the mask and says why. Snap Edges stays its own tool. Transparent and glowing HUD can still miss. Paint and erase stay the escape hatch.
 
 Do not add Object Select, Magic Wand, or Quick Selection. Do not add click, box, or hover as a second mode. Do not add preview before apply. Do not train a decoder. Do not delete the ONNX stack in this release.
 
 ## 0.7.0 — auto-hide stills
 
-[Milestone](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/3). [#74](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/74). After [#67](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/67).
+[Milestone](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/3). [#74](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/74). [#67](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/67) is included in 0.6.0, not a separate tag.
 
 The checkbox stays off by default. While it is on, mark the current crop show or hide. A matching hide still forces hide, even if a show still also matches and the old edge score would show. Otherwise a matching show still forces show. If none of the extra stills match, today's gate against the Apply still still applies.
 
@@ -54,8 +39,8 @@ The plugin does not know "menu". It only knows that saved crop. Two crops that a
 - [#75](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/75). Remove MobileSAM, the DLL, and the models after [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73) is the Magic Select people use. Do not delete `SAMHUDTraining` stills. Do not overwrite `data/models/mobilesam.decoder.onnx` in the meantime.
 - macOS and Linux builds and installers
 - Color tolerance for flat panels. Fill floods an outline today.
-- Preview Expand and Feather in the editor, after [#69](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/69)
-- Magnetic tracing. Snap Edges is one-shot. Do not add a second tracer until [#70](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/70) is done.
+- Preview Expand and Feather in the editor. [#69](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/69) is included in 0.6.0.
+- Magnetic tracing. Snap Edges is one-shot. [#70](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/70) is included in 0.6.0. Do not add a second tracer in 0.6.0.
 
 ## Not doing
 
@@ -76,8 +61,7 @@ The plugin does not know "menu". It only knows that saved crop. Two crops that a
 
 | Milestone | Issues |
 | --- | --- |
-| [0.5.6](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/1) | [#62](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/62)–[#71](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/71) |
-| [0.6.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/2) | [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73) |
-| [0.7.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/3) | [#74](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/74), after [#67](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/67) |
+| [0.6.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/2) | [#73](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/73), and [#62](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/62)–[#71](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/71) (no 0.5.6 tag) |
+| [0.7.0](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/milestone/3) | [#74](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/74) |
 | Not scheduled | [#75](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/75) |
 | Closed, do not reopen | [#41](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/41), [#43](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/43), [#44](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/44), [#46](https://github.com/Milzstream/OBS-Vertical-Mask-Generator/issues/46) |
