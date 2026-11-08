@@ -1292,3 +1292,326 @@ bool mask_magic_pick_ok(int mask_pixels, int crop_pixels, float iou)
 		return false;
 	return true;
 }
+
+MaskMagicPick mask_magic_pick(const uint8_t *bgra, int stride, int width, int height, const std::vector<MaskPoint> &loop)
+{
+	constexpr int k_edge = 24;
+	constexpr int k_color = 36;
+	constexpr int k_ring = 3;
+	constexpr int k_min = 16;
+	constexpr int k_strong_min = 8;
+	constexpr int k_mad_max = 40;
+
+	MaskMagicPick pick;
+	if (!bgra || width < 3 || height < 3 || width > 16384 || height > 16384 || stride < width * 4 || loop.size() < 3)
+		return pick;
+	const int n = width * height;
+	if (n <= 0)
+		return pick;
+	pick.width = width;
+	pick.height = height;
+
+	std::vector<uint8_t> inside(static_cast<size_t>(n), 0);
+	mask_fill_polygon(inside, width, height, loop);
+	int inside_count = 0;
+	for (int i = 0; i < n; i++) {
+		if (inside[static_cast<size_t>(i)])
+			inside_count++;
+	}
+	if (inside_count < k_min) {
+		pick.status = MaskMagicPickStatus::TooSmall;
+		return pick;
+	}
+
+	std::vector<uint8_t> lum(static_cast<size_t>(n));
+	std::vector<uint8_t> cr(static_cast<size_t>(n));
+	std::vector<uint8_t> cg(static_cast<size_t>(n));
+	std::vector<uint8_t> cb(static_cast<size_t>(n));
+	for (int y = 0; y < height; y++) {
+		const uint8_t *row = bgra + static_cast<size_t>(y) * stride;
+		for (int x = 0; x < width; x++) {
+			const size_t i = static_cast<size_t>(y) * width + x;
+			cb[i] = row[x * 4 + 0];
+			cg[i] = row[x * 4 + 1];
+			cr[i] = row[x * 4 + 2];
+			lum[i] = static_cast<uint8_t>((77 * cr[i] + 150 * cg[i] + 29 * cb[i]) >> 8);
+		}
+	}
+	std::vector<uint16_t> mag;
+	mask_sobel(lum, width, height, mag);
+
+	int strong = 0;
+	int max_in = 0;
+	for (int i = 0; i < n; i++) {
+		if (!inside[static_cast<size_t>(i)])
+			continue;
+		const int m = mag[static_cast<size_t>(i)];
+		max_in = std::max(max_in, m);
+		if (m >= k_edge)
+			strong++;
+	}
+	if (max_in < k_edge || strong < k_strong_min) {
+		pick.status = MaskMagicPickStatus::NoEdge;
+		return pick;
+	}
+
+	std::vector<uint8_t> band(static_cast<size_t>(n), 0);
+	std::vector<int> q;
+	q.reserve(static_cast<size_t>(n / 16));
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			const int i = y * width + x;
+			if (!inside[static_cast<size_t>(i)])
+				continue;
+			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
+					   y + 1 < height ? i + width : -1};
+			for (int nbi : nb) {
+				if (nbi >= 0 && inside[static_cast<size_t>(nbi)])
+					continue;
+				if (nbi < 0)
+					continue;
+				if (band[static_cast<size_t>(nbi)])
+					continue;
+				band[static_cast<size_t>(nbi)] = 1;
+				q.push_back(nbi);
+			}
+		}
+	}
+	for (size_t qi = 0; qi < q.size(); qi++) {
+		const int i = q[qi];
+		const int depth = band[static_cast<size_t>(i)];
+		if (depth >= k_ring)
+			continue;
+		const int x = i % width;
+		const int y = i / width;
+		const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
+				   y + 1 < height ? i + width : -1};
+		for (int nbi : nb) {
+			if (nbi < 0 || inside[static_cast<size_t>(nbi)] || band[static_cast<size_t>(nbi)])
+				continue;
+			band[static_cast<size_t>(nbi)] = static_cast<uint8_t>(depth + 1);
+			q.push_back(nbi);
+		}
+	}
+
+	std::vector<int> samples;
+	std::vector<int> samples_all;
+	samples.reserve(q.size());
+	for (int i = 0; i < n; i++) {
+		if (!band[static_cast<size_t>(i)])
+			continue;
+		samples_all.push_back(i);
+		if (mag[static_cast<size_t>(i)] < k_edge)
+			samples.push_back(i);
+	}
+	if (static_cast<int>(samples.size()) < k_strong_min)
+		samples.swap(samples_all);
+	if (static_cast<int>(samples.size()) < k_strong_min) {
+		samples.clear();
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				const int i = y * width + x;
+				if (!inside[static_cast<size_t>(i)] || mag[static_cast<size_t>(i)] >= k_edge)
+					continue;
+				const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
+						   y + 1 < height ? i + width : -1};
+				bool rim = false;
+				for (int nbi : nb) {
+					if (nbi < 0 || !inside[static_cast<size_t>(nbi)])
+						rim = true;
+				}
+				if (rim)
+					samples.push_back(i);
+			}
+		}
+	}
+	if (static_cast<int>(samples.size()) < k_strong_min) {
+		pick.status = MaskMagicPickStatus::Failed;
+		return pick;
+	}
+
+	std::vector<uint8_t> rs;
+	std::vector<uint8_t> gs;
+	std::vector<uint8_t> bs;
+	rs.reserve(samples.size());
+	gs.reserve(samples.size());
+	bs.reserve(samples.size());
+	for (int i : samples) {
+		rs.push_back(cr[static_cast<size_t>(i)]);
+		gs.push_back(cg[static_cast<size_t>(i)]);
+		bs.push_back(cb[static_cast<size_t>(i)]);
+	}
+	const auto median8 = [](std::vector<uint8_t> &v) {
+		const size_t mid = v.size() / 2;
+		std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
+		return static_cast<int>(v[mid]);
+	};
+	const int med_r = median8(rs);
+	const int med_g = median8(gs);
+	const int med_b = median8(bs);
+
+	std::vector<uint8_t> fg(static_cast<size_t>(n), 0);
+	for (int i = 0; i < n; i++) {
+		if (!inside[static_cast<size_t>(i)])
+			continue;
+		const int dist = std::abs(static_cast<int>(cr[static_cast<size_t>(i)]) - med_r) +
+				 std::abs(static_cast<int>(cg[static_cast<size_t>(i)]) - med_g) +
+				 std::abs(static_cast<int>(cb[static_cast<size_t>(i)]) - med_b);
+		if (dist >= k_color)
+			fg[static_cast<size_t>(i)] = 1;
+	}
+
+	std::vector<uint8_t> seen(static_cast<size_t>(n), 0);
+	std::vector<int> best;
+	int best_count = 0;
+	int best_supported = 0;
+	int best_boundary = 1;
+	bool saw_small = false;
+	bool saw_large = false;
+	for (int seed = 0; seed < n; seed++) {
+		if (!fg[static_cast<size_t>(seed)] || seen[static_cast<size_t>(seed)])
+			continue;
+		std::vector<int> pix;
+		pix.push_back(seed);
+		seen[static_cast<size_t>(seed)] = 1;
+		for (size_t qi = 0; qi < pix.size(); qi++) {
+			const int i = pix[qi];
+			const int x = i % width;
+			const int y = i / width;
+			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
+					   y + 1 < height ? i + width : -1};
+			for (int nbi : nb) {
+				if (nbi < 0 || !fg[static_cast<size_t>(nbi)] || seen[static_cast<size_t>(nbi)])
+					continue;
+				seen[static_cast<size_t>(nbi)] = 1;
+				pix.push_back(nbi);
+			}
+		}
+		const int count = static_cast<int>(pix.size());
+		if (count < k_min) {
+			saw_small = true;
+			continue;
+		}
+		saw_large = true;
+		int boundary = 0;
+		int supported = 0;
+		int loop_edge = 0;
+		int64_t luma_sum = 0;
+		for (int i : pix) {
+			luma_sum += lum[static_cast<size_t>(i)];
+			const int x = i % width;
+			const int y = i / width;
+			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
+					   y + 1 < height ? i + width : -1};
+			bool is_boundary = false;
+			bool on_loop = false;
+			bool edge_nb = mag[static_cast<size_t>(i)] >= k_edge;
+			for (int nbi : nb) {
+				if (nbi < 0 || !fg[static_cast<size_t>(nbi)])
+					is_boundary = true;
+				if (nbi < 0 || !inside[static_cast<size_t>(nbi)])
+					on_loop = true;
+				if (nbi >= 0 && mag[static_cast<size_t>(nbi)] >= k_edge)
+					edge_nb = true;
+			}
+			if (!is_boundary)
+				continue;
+			boundary++;
+			if (edge_nb)
+				supported++;
+			if (on_loop)
+				loop_edge++;
+		}
+		if (boundary < 1)
+			continue;
+		const int64_t mean = luma_sum / count;
+		int64_t dev = 0;
+		for (int i : pix)
+			dev += std::abs(static_cast<int64_t>(lum[static_cast<size_t>(i)]) - mean);
+		if (dev / count >= k_mad_max)
+			continue;
+		const bool huge = static_cast<int64_t>(count) * 100 > static_cast<int64_t>(inside_count) * 97;
+		if (!huge && loop_edge * 2 >= boundary)
+			continue;
+		if (supported * 20 < boundary * 7)
+			continue;
+		const bool better = best.empty() || supported * best_boundary > best_supported * boundary ||
+				    (supported * best_boundary == best_supported * boundary && count > best_count);
+		if (!better)
+			continue;
+		best.swap(pix);
+		best_count = count;
+		best_supported = supported;
+		best_boundary = boundary;
+	}
+	if (best.empty()) {
+		pick.status = saw_small && !saw_large ? MaskMagicPickStatus::TooSmall : MaskMagicPickStatus::NoEdge;
+		return pick;
+	}
+
+	std::vector<uint8_t> solid(static_cast<size_t>(n), 0);
+	for (int i : best)
+		solid[static_cast<size_t>(i)] = 1;
+	std::vector<uint8_t> reach(static_cast<size_t>(n), 0);
+	std::vector<int> flood;
+	flood.reserve(static_cast<size_t>(n / 8));
+	for (int x = 0; x < width; x++) {
+		const int top = x;
+		const int bot = (height - 1) * width + x;
+		if (!solid[static_cast<size_t>(top)] && !reach[static_cast<size_t>(top)]) {
+			reach[static_cast<size_t>(top)] = 1;
+			flood.push_back(top);
+		}
+		if (!solid[static_cast<size_t>(bot)] && !reach[static_cast<size_t>(bot)]) {
+			reach[static_cast<size_t>(bot)] = 1;
+			flood.push_back(bot);
+		}
+	}
+	for (int y = 0; y < height; y++) {
+		const int left = y * width;
+		const int right = y * width + width - 1;
+		if (!solid[static_cast<size_t>(left)] && !reach[static_cast<size_t>(left)]) {
+			reach[static_cast<size_t>(left)] = 1;
+			flood.push_back(left);
+		}
+		if (!solid[static_cast<size_t>(right)] && !reach[static_cast<size_t>(right)]) {
+			reach[static_cast<size_t>(right)] = 1;
+			flood.push_back(right);
+		}
+	}
+	for (size_t qi = 0; qi < flood.size(); qi++) {
+		const int i = flood[qi];
+		const int x = i % width;
+		const int y = i / width;
+		const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
+				   y + 1 < height ? i + width : -1};
+		for (int nbi : nb) {
+			if (nbi < 0 || solid[static_cast<size_t>(nbi)] || reach[static_cast<size_t>(nbi)])
+				continue;
+			reach[static_cast<size_t>(nbi)] = 1;
+			flood.push_back(nbi);
+		}
+	}
+	int mask_pixels = 0;
+	for (int i = 0; i < n; i++) {
+		if (!inside[static_cast<size_t>(i)] || reach[static_cast<size_t>(i)])
+			continue;
+		solid[static_cast<size_t>(i)] = 1;
+		mask_pixels++;
+	}
+	if (mask_pixels < k_min || static_cast<int64_t>(mask_pixels) * 1000 < static_cast<int64_t>(inside_count) * 4) {
+		pick.status = MaskMagicPickStatus::TooSmall;
+		return pick;
+	}
+	if (static_cast<int64_t>(mask_pixels) * 100 > static_cast<int64_t>(inside_count) * 97) {
+		pick.status = MaskMagicPickStatus::TooBig;
+		return pick;
+	}
+	pick.gray.assign(static_cast<size_t>(n), 0);
+	for (int i = 0; i < n; i++) {
+		if (solid[static_cast<size_t>(i)] && inside[static_cast<size_t>(i)])
+			pick.gray[static_cast<size_t>(i)] = 255;
+	}
+	pick.status = MaskMagicPickStatus::Ok;
+	return pick;
+}
