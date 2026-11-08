@@ -1015,8 +1015,8 @@ private:
 			} else {
 				for (int i = 1; i < lineFreehand_.size(); i++)
 					strokeOnMask(lineFreehand_[i - 1], lineFreehand_[i], 2.0);
-				if (!lineFreehand_.isEmpty())
-					linePts_ << lineFreehand_.back();
+				if (lineFreehand_.size() > 1)
+					linePts_ << lineFreehand_.mid(1);
 			}
 			lineDragging_ = false;
 			lineStraight_ = false;
@@ -1132,11 +1132,28 @@ private:
 		return snap;
 	}
 
+	void scalePoly(QPolygonF &poly, const QSize &from, const QSize &to)
+	{
+		if (from.isEmpty() || to.isEmpty() || from == to)
+			return;
+		const double sx = static_cast<double>(to.width()) / from.width();
+		const double sy = static_cast<double>(to.height()) / from.height();
+		for (QPointF &p : poly)
+			p = QPointF(p.x() * sx, p.y() * sy);
+	}
+
 	void restoreHistory(const HistorySnap &snap)
 	{
 		mask = snap.mask;
 		linePts_ = snap.linePts;
 		closedPoly_ = snap.closedPoly;
+		if (frame.isNull() || mask.isNull() || mask.size() == frame.size())
+			return;
+		const QSize from = mask.size();
+		mask = mask.scaled(frame.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+			       .convertToFormat(QImage::Format_Grayscale8);
+		scalePoly(linePts_, from, frame.size());
+		scalePoly(closedPoly_, from, frame.size());
 	}
 
 	void notifyHistory()
@@ -1310,7 +1327,10 @@ public:
 			canvas_->update();
 		});
 		connect(zoom, &QSlider::valueChanged, this, [this](int v) { canvas_->setZoomPercent(v); });
-		connect(snap, &QPushButton::clicked, this, [this]() { canvas_->snapEdges(); });
+		connect(snap, &QPushButton::clicked, this, [this, hintTool]() {
+			const char *key = canvas_->snapEdges() ? "HUDMask.Editor.Snapped" : "HUDMask.Editor.SnapFailed";
+			hintTool->setText(QString::fromUtf8(obs_module_text(key)));
+		});
 		connect(undo, &QPushButton::clicked, this, [this]() { canvas_->undo(); });
 		connect(redo, &QPushButton::clicked, this, [this]() { canvas_->redo(); });
 		connect(refresh, &QPushButton::clicked, this, [this]() {

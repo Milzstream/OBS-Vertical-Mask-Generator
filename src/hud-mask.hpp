@@ -2,6 +2,7 @@
 
 #include <obs-module.h>
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,9 @@ struct hud_mask {
 
 	std::string target_name;
 	std::string canvas_uuid;
+	bool target_scene = false;
 	std::string mask_path;
+	std::mutex data_mu;
 
 	int crop_left = 0;
 	int crop_top = 0;

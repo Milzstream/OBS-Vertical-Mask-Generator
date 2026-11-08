@@ -124,6 +124,31 @@ bool open_session(const OrtApi *api, OrtEnv *env, OrtSessionOptions *opts, const
 	return ort_ok(api, api->CreateSession(env, path.c_str(), opts, out), rel);
 }
 
+void fail_sessions()
+{
+	if (g_sam.api) {
+		if (g_sam.decoder)
+			g_sam.api->ReleaseSession(g_sam.decoder);
+		if (g_sam.encoder)
+			g_sam.api->ReleaseSession(g_sam.encoder);
+		if (g_sam.memory)
+			g_sam.api->ReleaseMemoryInfo(g_sam.memory);
+		if (g_sam.env)
+			g_sam.api->ReleaseEnv(g_sam.env);
+	}
+	g_sam.decoder = nullptr;
+	g_sam.encoder = nullptr;
+	g_sam.memory = nullptr;
+	g_sam.env = nullptr;
+	g_sam.api = nullptr;
+	if (g_sam.dll) {
+		FreeLibrary(g_sam.dll);
+		g_sam.dll = nullptr;
+	}
+	g_sam.ready = false;
+	g_sam.failed = true;
+}
+
 bool ensure_sessions()
 {
 	if (g_sam.ready)
@@ -134,30 +159,32 @@ bool ensure_sessions()
 	g_sam.dll = load_ort();
 	if (!g_sam.dll) {
 		obs_log(LOG_INFO, "MobileSAM skipped: onnxruntime.dll is not next to the plugin");
-		g_sam.failed = true;
+		fail_sessions();
 		return false;
 	}
 	auto get_base = reinterpret_cast<const OrtApiBase *(ORT_API_CALL *)(void)>(GetProcAddress(g_sam.dll, "OrtGetApiBase"));
 	if (!get_base) {
 		obs_log(LOG_WARNING, "MobileSAM skipped: OrtGetApiBase missing");
-		g_sam.failed = true;
+		fail_sessions();
 		return false;
 	}
 	g_sam.api = get_base()->GetApi(ORT_API_VERSION);
 	if (!g_sam.api) {
 		obs_log(LOG_WARNING, "MobileSAM skipped: ONNX Runtime API %d is not supported", ORT_API_VERSION);
-		g_sam.failed = true;
+		fail_sessions();
 		return false;
 	}
 	const OrtApi *api = g_sam.api;
 	if (!ort_ok(api, api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "hudmask", &g_sam.env), "CreateEnv")) {
-		g_sam.failed = true;
+		fail_sessions();
 		return false;
 	}
 
 	OrtSessionOptions *opts = nullptr;
 	if (!ort_ok(api, api->CreateSessionOptions(&opts), "CreateSessionOptions")) {
-		g_sam.failed = true;
+		if (opts)
+			api->ReleaseSessionOptions(opts);
+		fail_sessions();
 		return false;
 	}
 	if (OrtStatus *st = api->SetIntraOpNumThreads(opts, 2))
@@ -185,10 +212,11 @@ bool ensure_sessions()
 			obs_log(LOG_INFO, "MobileSAM skipped: models/mobilesam.encoder.onnx and decoder.onnx are not in plugin data");
 			logged = true;
 		}
+		fail_sessions();
 		return false;
 	}
 	if (!ort_ok(api, api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &g_sam.memory), "CreateCpuMemoryInfo")) {
-		g_sam.failed = true;
+		fail_sessions();
 		return false;
 	}
 	g_sam.ready = true;
