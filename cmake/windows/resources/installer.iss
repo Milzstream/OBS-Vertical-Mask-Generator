@@ -137,42 +137,19 @@ begin
 end;
 
 function InitializeSetup: Boolean;
-var
-  Tries: Integer;
 begin
   Result := True;
   OBSExePath := QueryProcessPath('obs64.exe');
   if OBSExePath = '' then
     OBSExePath := QueryProcessPath('obs32.exe');
-  Tries := 0;
+  if WizardSilent then
+    Exit;
   while IsOBSRunning do
   begin
-    if WizardSilent then
-    begin
-      if Tries >= 45 then
-      begin
-        Result := False;
-        Exit;
-      end;
-      Sleep(1000);
-      Tries := Tries + 1;
-    end
-    else if MsgBox('OBS Studio is running. Close OBS, then click Retry to install Source Cutout.', mbInformation, MB_RETRYCANCEL) = IDCANCEL then
+    if MsgBox('OBS Studio is running. Close OBS, then click Retry to install Source Cutout.', mbInformation, MB_RETRYCANCEL) = IDCANCEL then
     begin
       Result := False;
       Exit;
     end;
   end;
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ResultCode: Integer;
-  Path: String;
-begin
-  if (CurStep <> ssPostInstall) or (not WizardSilent) then
-    Exit;
-  Path := OBSLaunchPath('');
-  if Path <> '' then
-    Exec(Path, '', ExtractFilePath(Path), SW_SHOWNORMAL, ewNoWait, ResultCode);
 end;
