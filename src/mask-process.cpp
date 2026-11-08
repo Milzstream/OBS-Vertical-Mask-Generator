@@ -1,6 +1,8 @@
 #include "mask-process.hpp"
 
 #include <algorithm>
+#include <array>
+#include <climits>
 #include <cmath>
 
 void mask_binarize(std::vector<uint8_t> &gray, uint8_t threshold)
@@ -1293,14 +1295,396 @@ bool mask_magic_pick_ok(int mask_pixels, int crop_pixels, float iou)
 	return true;
 }
 
+/* ---- GrabCut pick (Rother, Kolmogorov & Blake, SIGGRAPH 2004) ------------
+ * Clean-room implementation of the published algorithm: trimap, 5-component
+ * full-covariance GMMs for foreground and background, and iterated graph
+ * cuts with a contrast-sensitive smoothness term. No ONNX, no learned model.
+ * The graph cut is solved with a highest-label push/relabel max-flow
+ * (Goldberg & Tarjan) written for this file. */
+
+namespace {
+
+struct GcComp {
+	double weight = 0;
+	double mean[3] = {0, 0, 0};
+	double inv[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+	double logdet = 0;
+
+	double neglog(const float z[3]) const
+	{
+		const double d[3] = {z[0] - mean[0], z[1] - mean[1], z[2] - mean[2]};
+		const double q = d[0] * (inv[0] * d[0] + inv[1] * d[1] + inv[2] * d[2]) +
+				 d[1] * (inv[3] * d[0] + inv[4] * d[1] + inv[5] * d[2]) +
+				 d[2] * (inv[6] * d[0] + inv[7] * d[1] + inv[8] * d[2]);
+		return -std::log(weight) + 0.5 * (logdet + q + 3.0 * 1.8378770664093453);
+	}
+};
+
+struct GcGmm {
+	std::vector<GcComp> comps;
+
+	bool empty() const { return comps.empty(); }
+
+	double neglog(const float z[3]) const
+	{
+		double best = 1e100;
+		for (const GcComp &c : comps)
+			best = std::min(best, c.neglog(z));
+		return best;
+	}
+};
+
+/* Fit a GMM with up to kmax components: deterministic farthest-point seeding,
+ * Lloyd (k-means) iterations on a subsample, then full-covariance component
+ * statistics over every sample, with a ridge on the covariance diagonal that
+ * is raised until the matrix is invertible. */
+GcGmm gc_fit_gmm(const std::vector<std::array<float, 3>> &samples, int kmax)
+{
+	GcGmm gmm;
+	if (samples.empty() || kmax < 1)
+		return gmm;
+
+	/* Subsample for the k-means stage only. */
+	std::vector<std::array<float, 3>> seed = samples;
+	if (seed.size() > 4000) {
+		std::vector<std::array<float, 3>> sub;
+		const double stride = static_cast<double>(seed.size()) / 4000.0;
+		for (double i = 0; i < static_cast<double>(seed.size()); i += stride)
+			sub.push_back(seed[static_cast<size_t>(i)]);
+		seed.swap(sub);
+	}
+	int k = kmax;
+	if (static_cast<int>(seed.size()) < k)
+		k = static_cast<int>(seed.size());
+	if (k < 1)
+		k = 1;
+
+	/* Farthest-point seeding (deterministic). */
+	double mean[3] = {0, 0, 0};
+	for (const auto &s : seed)
+		for (int c = 0; c < 3; c++)
+			mean[c] += s[c];
+	for (int c = 0; c < 3; c++)
+		mean[c] /= static_cast<double>(seed.size());
+	std::vector<std::array<double, 3>> centres;
+	{
+		size_t best_i = 0;
+		double best_d = -1;
+		for (size_t i = 0; i < seed.size(); i++) {
+			double d = 0;
+			for (int c = 0; c < 3; c++) {
+				const double diff = seed[i][c] - mean[c];
+				d += diff * diff;
+			}
+			if (d > best_d) {
+				best_d = d;
+				best_i = i;
+			}
+		}
+		(void)best_d;
+		centres.push_back({seed[best_i][0], seed[best_i][1], seed[best_i][2]});
+	}
+	while (static_cast<int>(centres.size()) < k) {
+		size_t best_i = 0;
+		double best_d = -1;
+		for (size_t i = 0; i < seed.size(); i++) {
+			double mind = 1e100;
+			for (const auto &cen : centres) {
+				double d = 0;
+				for (int c = 0; c < 3; c++) {
+					const double diff = seed[i][c] - cen[c];
+					d += diff * diff;
+				}
+				mind = std::min(mind, d);
+			}
+			if (mind > best_d) {
+				best_d = mind;
+				best_i = i;
+			}
+		}
+		if (best_d <= 0)
+			break;
+		centres.push_back({seed[best_i][0], seed[best_i][1], seed[best_i][2]});
+	}
+	k = static_cast<int>(centres.size());
+
+	auto nearest = [&centres](const std::array<float, 3> &s) {
+		int best = 0;
+		double best_d = 1e100;
+		for (int j = 0; j < static_cast<int>(centres.size()); j++) {
+			double d = 0;
+			for (int c = 0; c < 3; c++) {
+				const double diff = s[c] - centres[j][c];
+				d += diff * diff;
+			}
+			if (d < best_d) {
+				best_d = d;
+				best = j;
+			}
+		}
+		return best;
+	};
+
+	/* Lloyd iterations on the seed subsample. */
+	for (int it = 0; it < 25; it++) {
+		std::vector<std::array<double, 3>> sum(k, {0, 0, 0});
+		std::vector<int> cnt(k, 0);
+		for (const auto &s : seed) {
+			const int j = nearest(s);
+			cnt[j]++;
+			for (int c = 0; c < 3; c++)
+				sum[j][c] += s[c];
+		}
+		bool moved = false;
+		for (int j = 0; j < k; j++) {
+			if (!cnt[j])
+				continue;
+			for (int c = 0; c < 3; c++) {
+				const double v = sum[j][c] / cnt[j];
+				if (std::fabs(v - centres[j][c]) > 0.01)
+					moved = true;
+				centres[j][c] = v;
+			}
+		}
+		if (!moved)
+			break;
+	}
+
+	/* Component statistics over all samples. */
+	struct Acc {
+		double n = 0;
+		double s[3] = {0, 0, 0};
+		double ss[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+	};
+	std::vector<Acc> acc(k);
+	for (const auto &s : samples) {
+		const int j = nearest(s);
+		Acc &a = acc[j];
+		a.n += 1;
+		for (int r = 0; r < 3; r++) {
+			a.s[r] += s[r];
+			for (int c = 0; c < 3; c++)
+				a.ss[r * 3 + c] += static_cast<double>(s[r]) * s[c];
+		}
+	}
+	const double total = static_cast<double>(samples.size());
+	for (int j = 0; j < k; j++) {
+		if (acc[j].n < 2)
+			continue;
+		GcComp comp;
+		comp.weight = acc[j].n / total;
+		double cov[9];
+		for (int c = 0; c < 3; c++)
+			comp.mean[c] = acc[j].s[c] / acc[j].n;
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++)
+				cov[r * 3 + c] = acc[j].ss[r * 3 + c] / acc[j].n - comp.mean[r] * comp.mean[c];
+		}
+		bool ok = false;
+		for (double ridge = 16.0; ridge <= 4096.0 && !ok; ridge *= 4.0) {
+			double m[9];
+			for (int i = 0; i < 9; i++)
+				m[i] = cov[i];
+			m[0] += ridge;
+			m[4] += ridge;
+			m[8] += ridge;
+			const double det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) +
+					   m[2] * (m[3] * m[7] - m[4] * m[6]);
+			if (!(det > 1.0) || !std::isfinite(det))
+				continue;
+			comp.inv[0] = (m[4] * m[8] - m[5] * m[7]) / det;
+			comp.inv[1] = (m[2] * m[7] - m[1] * m[8]) / det;
+			comp.inv[2] = (m[1] * m[5] - m[2] * m[4]) / det;
+			comp.inv[3] = (m[5] * m[6] - m[3] * m[8]) / det;
+			comp.inv[4] = (m[0] * m[8] - m[2] * m[6]) / det;
+			comp.inv[5] = (m[2] * m[3] - m[0] * m[5]) / det;
+			comp.inv[6] = (m[3] * m[7] - m[4] * m[6]) / det;
+			comp.inv[7] = (m[1] * m[6] - m[0] * m[7]) / det;
+			comp.inv[8] = (m[0] * m[4] - m[1] * m[3]) / det;
+			comp.logdet = std::log(det);
+			ok = true;
+		}
+		if (ok)
+			gmm.comps.push_back(comp);
+	}
+	return gmm;
+}
+
+/* Highest-label push/relabel max-flow. Nodes reachable from the source in
+ * the residual graph after the flow form the source side of the min cut. */
+struct GcGraph {
+	struct Edge {
+		int to;
+		int rev;
+		double cap;
+	};
+
+	int n;
+	std::vector<std::vector<Edge>> g;
+	std::vector<double> excess;
+	std::vector<int> height;
+	std::vector<int> cur;
+	/* Nodes the gap heuristic must never retire (hard constraints). */
+	std::vector<char> keep;
+
+	GcGraph() = delete;
+
+	explicit GcGraph(int nodes) : n(nodes), g(static_cast<size_t>(nodes)), excess(static_cast<size_t>(nodes), 0),
+				      height(static_cast<size_t>(nodes), 0), cur(static_cast<size_t>(nodes), 0),
+				      keep(static_cast<size_t>(nodes), 0)
+	{
+	}
+
+	void add_directed(int u, int v, double cap)
+	{
+		Edge a{v, static_cast<int>(g[static_cast<size_t>(v)].size()), cap};
+		Edge b{u, static_cast<int>(g[static_cast<size_t>(u)].size()), 0};
+		g[static_cast<size_t>(u)].push_back(a);
+		g[static_cast<size_t>(v)].push_back(b);
+	}
+
+	/* An n-link: crossing it in either direction costs cap. */
+	void add_cut_edge(int u, int v, double cap)
+	{
+		Edge a{v, static_cast<int>(g[static_cast<size_t>(v)].size()), cap};
+		Edge b{u, static_cast<int>(g[static_cast<size_t>(u)].size()), cap};
+		g[static_cast<size_t>(u)].push_back(a);
+		g[static_cast<size_t>(v)].push_back(b);
+	}
+
+	std::vector<char> mincut_source_side(int s, int t)
+	{
+		const double eps = 1e-9;
+		const int big = n + 5;
+		height[static_cast<size_t>(s)] = n;
+		std::vector<std::vector<int>> buckets(static_cast<size_t>(4 * n + 16));
+		std::vector<char> inq(static_cast<size_t>(n), 0);
+		/* Gap heuristic: cnt[h] counts nodes at height h. When a height
+		 * level empties, no residual arc crosses it, so every node
+		 * strictly between it and n can never reach the sink again:
+		 * those nodes are on the source side of the min cut and are
+		 * retired (forced to the source side below). */
+		std::vector<int> cnt(static_cast<size_t>(4 * n + 16), 0);
+		std::vector<char> dead(static_cast<size_t>(n), 0);
+		for (int v = 0; v < n; v++)
+			cnt[static_cast<size_t>(height[static_cast<size_t>(v)])]++;
+		int top = 0;
+		auto enqueue = [&](int v) {
+			if (v == s || v == t || dead[static_cast<size_t>(v)] || excess[static_cast<size_t>(v)] <= eps ||
+			    inq[static_cast<size_t>(v)])
+				return;
+			const int hv = height[static_cast<size_t>(v)];
+			if (hv >= static_cast<int>(buckets.size()))
+				buckets.resize(static_cast<size_t>(hv + 64));
+			inq[static_cast<size_t>(v)] = 1;
+			buckets[static_cast<size_t>(hv)].push_back(v);
+			top = std::max(top, hv);
+		};
+
+		for (Edge &e : g[static_cast<size_t>(s)]) {
+			if (e.cap <= eps || e.to == s)
+				continue;
+			const double f = e.cap;
+			e.cap = 0;
+			g[static_cast<size_t>(e.to)][static_cast<size_t>(e.rev)].cap += f;
+			excess[static_cast<size_t>(e.to)] += f;
+			excess[static_cast<size_t>(s)] -= f;
+			enqueue(e.to);
+		}
+
+		while (top >= 0) {
+			if (buckets[static_cast<size_t>(top)].empty()) {
+				top--;
+				continue;
+			}
+			const int v = buckets[static_cast<size_t>(top)].back();
+			buckets[static_cast<size_t>(top)].pop_back();
+			inq[static_cast<size_t>(v)] = 0;
+			if (dead[static_cast<size_t>(v)])
+				continue;
+			while (excess[static_cast<size_t>(v)] > eps && !dead[static_cast<size_t>(v)]) {
+				if (cur[static_cast<size_t>(v)] < static_cast<int>(g[static_cast<size_t>(v)].size())) {
+					Edge &e = g[static_cast<size_t>(v)][static_cast<size_t>(cur[static_cast<size_t>(v)])];
+					if (e.cap > eps && height[static_cast<size_t>(v)] == height[static_cast<size_t>(e.to)] + 1) {
+						const double f = std::min(excess[static_cast<size_t>(v)], e.cap);
+						e.cap -= f;
+						g[static_cast<size_t>(e.to)][static_cast<size_t>(e.rev)].cap += f;
+						excess[static_cast<size_t>(v)] -= f;
+						excess[static_cast<size_t>(e.to)] += f;
+						enqueue(e.to);
+					} else {
+						cur[static_cast<size_t>(v)]++;
+					}
+				} else {
+					int minh = INT_MAX;
+					for (const Edge &e : g[static_cast<size_t>(v)]) {
+						if (e.cap > eps)
+							minh = std::min(minh, height[static_cast<size_t>(e.to)]);
+					}
+					if (minh == INT_MAX)
+						break;
+					const int oldh = height[static_cast<size_t>(v)];
+					int newh = minh + 1;
+					if (newh > n && !keep[static_cast<size_t>(v)]) {
+						newh = big;
+						dead[static_cast<size_t>(v)] = 1;
+					}
+					cnt[static_cast<size_t>(oldh)]--;
+					if (newh >= static_cast<int>(cnt.size()))
+						cnt.resize(static_cast<size_t>(newh + 64), 0);
+					cnt[static_cast<size_t>(newh)]++;
+					height[static_cast<size_t>(v)] = newh;
+					cur[static_cast<size_t>(v)] = 0;
+					top = std::max(top, newh);
+					if (cnt[static_cast<size_t>(oldh)] == 0 && oldh > 0 && oldh < n) {
+						for (int u = 0; u < n; u++) {
+							const int hu = height[static_cast<size_t>(u)];
+							if (u == s || u == t || keep[static_cast<size_t>(u)] ||
+							    dead[static_cast<size_t>(u)] || hu <= oldh || hu >= n)
+								continue;
+							cnt[static_cast<size_t>(hu)]--;
+							cnt[static_cast<size_t>(big)]++;
+							height[static_cast<size_t>(u)] = big;
+							dead[static_cast<size_t>(u)] = 1;
+						}
+					}
+				}
+			}
+		}
+
+		std::vector<char> side(static_cast<size_t>(n), 0);
+		for (int v = 0; v < n; v++) {
+			if (dead[static_cast<size_t>(v)])
+				side[static_cast<size_t>(v)] = 1;
+		}
+		std::vector<int> stack;
+		side[static_cast<size_t>(s)] = 1;
+		stack.push_back(s);
+		while (!stack.empty()) {
+			const int v = stack.back();
+			stack.pop_back();
+			for (const Edge &e : g[static_cast<size_t>(v)]) {
+				if (e.cap > eps && !side[static_cast<size_t>(e.to)]) {
+					side[static_cast<size_t>(e.to)] = 1;
+					stack.push_back(e.to);
+				}
+			}
+		}
+		return side;
+	}
+};
+
+} // namespace
+
 MaskMagicPick mask_magic_pick(const uint8_t *bgra, int stride, int width, int height, const std::vector<MaskPoint> &loop)
 {
-	constexpr int k_edge = 24;
-	constexpr int k_color = 36;
-	constexpr int k_ring = 3;
 	constexpr int k_min = 16;
-	constexpr int k_strong_min = 8;
-	constexpr int k_mad_max = 40;
+	constexpr int k_components = 5;
+	constexpr int k_iterations = 5;
+	constexpr double k_gamma = 50.0;
+	constexpr double k_inf = 1e6;
+	constexpr double k_cost_cap = 80.0;
+	constexpr int k_work_cap = 65536;
 
 	MaskMagicPick pick;
 	if (!bgra || width < 3 || height < 3 || width > 16384 || height > 16384 || stride < width * 4 || loop.size() < 3)
@@ -1323,281 +1707,306 @@ MaskMagicPick mask_magic_pick(const uint8_t *bgra, int stride, int width, int he
 		return pick;
 	}
 
-	std::vector<uint8_t> lum(static_cast<size_t>(n));
-	std::vector<uint8_t> cr(static_cast<size_t>(n));
-	std::vector<uint8_t> cg(static_cast<size_t>(n));
-	std::vector<uint8_t> cb(static_cast<size_t>(n));
-	for (int y = 0; y < height; y++) {
-		const uint8_t *row = bgra + static_cast<size_t>(y) * stride;
-		for (int x = 0; x < width; x++) {
-			const size_t i = static_cast<size_t>(y) * width + x;
-			cb[i] = row[x * 4 + 0];
-			cg[i] = row[x * 4 + 1];
-			cr[i] = row[x * 4 + 2];
-			lum[i] = static_cast<uint8_t>((77 * cr[i] + 150 * cg[i] + 29 * cb[i]) >> 8);
+	/* Window: loop bbox expanded by ~15% (min 8px), as in GrabCut practice. */
+	const MaskLoopBounds bounds = mask_loop_bounds(loop, width, height, 0);
+	if (bounds.empty)
+		return pick;
+	const int margin = std::max(8, static_cast<int>(std::ceil(0.15 * std::max(bounds.width, bounds.height))));
+	const int wx0 = std::max(0, bounds.x - margin);
+	const int wy0 = std::max(0, bounds.y - margin);
+	const int wx1 = std::min(width - 1, bounds.x + bounds.width - 1 + margin);
+	const int wy1 = std::min(height - 1, bounds.y + bounds.height - 1 + margin);
+	const int win_w = wx1 - wx0 + 1;
+	const int win_h = wy1 - wy0 + 1;
+	if (win_w < 3 || win_h < 3)
+		return pick;
+
+	int step = 1;
+	while (((win_w + step - 1) / step) * ((win_h + step - 1) / step) > k_work_cap)
+		step++;
+	const int ww = (win_w + step - 1) / step;
+	const int wh = (win_h + step - 1) / step;
+	const int wn = ww * wh;
+
+	/* Working colours (R,G,B in 0..255) sampled at each cell centre. */
+	std::vector<std::array<float, 3>> col(static_cast<size_t>(wn));
+	for (int y = 0; y < wh; y++) {
+		const int sy = wy0 + std::min(y * step + step / 2, win_h - 1);
+		const uint8_t *row = bgra + static_cast<size_t>(sy) * stride;
+		for (int x = 0; x < ww; x++) {
+			const int sx = wx0 + std::min(x * step + step / 2, win_w - 1);
+			col[static_cast<size_t>(y) * ww + x] = {static_cast<float>(row[sx * 4 + 2]),
+								static_cast<float>(row[sx * 4 + 1]),
+								static_cast<float>(row[sx * 4 + 0])};
 		}
 	}
-	std::vector<uint16_t> mag;
-	mask_sobel(lum, width, height, mag);
 
-	int strong = 0;
-	int max_in = 0;
-	for (int i = 0; i < n; i++) {
-		if (!inside[static_cast<size_t>(i)])
-			continue;
-		const int m = mag[static_cast<size_t>(i)];
-		max_in = std::max(max_in, m);
-		if (m >= k_edge)
-			strong++;
+	/* Working inside-loop mask: the loop scaled into window coordinates. */
+	std::vector<uint8_t> w_in(static_cast<size_t>(wn), 0);
+	{
+		std::vector<MaskPoint> scaled;
+		scaled.reserve(loop.size());
+		for (const MaskPoint &pt : loop)
+			scaled.push_back({(pt.x - static_cast<float>(wx0)) / static_cast<float>(step),
+					  (pt.y - static_cast<float>(wy0)) / static_cast<float>(step)});
+		std::vector<uint8_t> filled(static_cast<size_t>(wn), 0);
+		mask_fill_polygon(filled, ww, wh, scaled);
+		for (int i = 0; i < wn; i++)
+			w_in[static_cast<size_t>(i)] = filled[static_cast<size_t>(i)] ? 1 : 0;
 	}
-	if (max_in < k_edge || strong < k_strong_min) {
+	int w_in_count = 0;
+	for (int i = 0; i < wn; i++)
+		w_in_count += w_in[static_cast<size_t>(i)];
+	if (w_in_count < 1)
+		return pick;
+	if (w_in_count == wn) {
+		/* The loop covers the whole window: no background seed at all. */
+		pick.status = MaskMagicPickStatus::TooBig;
+		return pick;
+	}
+
+	/* Contrast in the window: a flat frame has nothing to cut along. */
+	double pair_sum = 0;
+	int pair_cnt = 0;
+	for (int y = 0; y < wh; y++) {
+		for (int x = 0; x < ww; x++) {
+			const int i = y * ww + x;
+			if (x + 1 < ww) {
+				double d = 0;
+				for (int c = 0; c < 3; c++) {
+					const double diff = col[static_cast<size_t>(i)][c] - col[static_cast<size_t>(i + 1)][c];
+					d += diff * diff;
+				}
+				pair_sum += d;
+				pair_cnt++;
+			}
+			if (y + 1 < wh) {
+				double d = 0;
+				for (int c = 0; c < 3; c++) {
+					const double diff = col[static_cast<size_t>(i)][c] - col[static_cast<size_t>(i + ww)][c];
+					d += diff * diff;
+				}
+				pair_sum += d;
+				pair_cnt++;
+			}
+		}
+	}
+	const double mean_pair = pair_cnt ? pair_sum / pair_cnt : 0;
+	if (mean_pair < 1.0) {
 		pick.status = MaskMagicPickStatus::NoEdge;
 		return pick;
 	}
+	const double beta = 1.0 / (2.0 * mean_pair);
 
-	std::vector<uint8_t> band(static_cast<size_t>(n), 0);
-	std::vector<int> q;
-	q.reserve(static_cast<size_t>(n / 16));
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++) {
-			const int i = y * width + x;
-			if (!inside[static_cast<size_t>(i)])
-				continue;
-			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
-					   y + 1 < height ? i + width : -1};
-			for (int nbi : nb) {
-				if (nbi >= 0 && inside[static_cast<size_t>(nbi)])
-					continue;
-				if (nbi < 0)
-					continue;
-				if (band[static_cast<size_t>(nbi)])
-					continue;
-				band[static_cast<size_t>(nbi)] = 1;
-				q.push_back(nbi);
-			}
-		}
-	}
-	for (size_t qi = 0; qi < q.size(); qi++) {
-		const int i = q[qi];
-		const int depth = band[static_cast<size_t>(i)];
-		if (depth >= k_ring)
-			continue;
-		const int x = i % width;
-		const int y = i / width;
-		const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
-				   y + 1 < height ? i + width : -1};
-		for (int nbi : nb) {
-			if (nbi < 0 || inside[static_cast<size_t>(nbi)] || band[static_cast<size_t>(nbi)])
-				continue;
-			band[static_cast<size_t>(nbi)] = static_cast<uint8_t>(depth + 1);
-			q.push_back(nbi);
-		}
-	}
-
-	std::vector<int> samples;
-	std::vector<int> samples_all;
-	samples.reserve(q.size());
-	for (int i = 0; i < n; i++) {
-		if (!band[static_cast<size_t>(i)])
-			continue;
-		samples_all.push_back(i);
-		if (mag[static_cast<size_t>(i)] < k_edge)
-			samples.push_back(i);
-	}
-	if (static_cast<int>(samples.size()) < k_strong_min)
-		samples.swap(samples_all);
-	if (static_cast<int>(samples.size()) < k_strong_min) {
-		samples.clear();
-		for (int y = 0; y < height; y++) {
-			for (int x = 0; x < width; x++) {
-				const int i = y * width + x;
-				if (!inside[static_cast<size_t>(i)] || mag[static_cast<size_t>(i)] >= k_edge)
-					continue;
-				const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
-						   y + 1 < height ? i + width : -1};
-				bool rim = false;
-				for (int nbi : nb) {
-					if (nbi < 0 || !inside[static_cast<size_t>(nbi)])
-						rim = true;
+	/* Neighbour smoothness weights (right and down), constant across cuts. */
+	std::vector<double> smooth_r(static_cast<size_t>(wn), 0), smooth_d(static_cast<size_t>(wn), 0);
+	for (int y = 0; y < wh; y++) {
+		for (int x = 0; x < ww; x++) {
+			const int i = y * ww + x;
+			if (x + 1 < ww) {
+				double d = 0;
+				for (int c = 0; c < 3; c++) {
+					const double diff = col[static_cast<size_t>(i)][c] - col[static_cast<size_t>(i + 1)][c];
+					d += diff * diff;
 				}
-				if (rim)
-					samples.push_back(i);
+				smooth_r[static_cast<size_t>(i)] = k_gamma * std::exp(-beta * d);
+			}
+			if (y + 1 < wh) {
+				double d = 0;
+				for (int c = 0; c < 3; c++) {
+					const double diff = col[static_cast<size_t>(i)][c] - col[static_cast<size_t>(i + ww)][c];
+					d += diff * diff;
+				}
+				smooth_d[static_cast<size_t>(i)] = k_gamma * std::exp(-beta * d);
 			}
 		}
 	}
-	if (static_cast<int>(samples.size()) < k_strong_min) {
-		pick.status = MaskMagicPickStatus::Failed;
-		return pick;
-	}
 
-	std::vector<uint8_t> rs;
-	std::vector<uint8_t> gs;
-	std::vector<uint8_t> bs;
-	rs.reserve(samples.size());
-	gs.reserve(samples.size());
-	bs.reserve(samples.size());
-	for (int i : samples) {
-		rs.push_back(cr[static_cast<size_t>(i)]);
-		gs.push_back(cg[static_cast<size_t>(i)]);
-		bs.push_back(cb[static_cast<size_t>(i)]);
-	}
-	const auto median8 = [](std::vector<uint8_t> &v) {
-		const size_t mid = v.size() / 2;
-		std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
-		return static_cast<int>(v[mid]);
-	};
-	const int med_r = median8(rs);
-	const int med_g = median8(gs);
-	const int med_b = median8(bs);
-
-	std::vector<uint8_t> fg(static_cast<size_t>(n), 0);
-	for (int i = 0; i < n; i++) {
-		if (!inside[static_cast<size_t>(i)])
-			continue;
-		const int dist = std::abs(static_cast<int>(cr[static_cast<size_t>(i)]) - med_r) +
-				 std::abs(static_cast<int>(cg[static_cast<size_t>(i)]) - med_g) +
-				 std::abs(static_cast<int>(cb[static_cast<size_t>(i)]) - med_b);
-		if (dist >= k_color)
-			fg[static_cast<size_t>(i)] = 1;
-	}
-
-	std::vector<uint8_t> seen(static_cast<size_t>(n), 0);
-	std::vector<int> best;
-	int best_count = 0;
-	int best_supported = 0;
-	int best_boundary = 1;
-	bool saw_small = false;
-	bool saw_large = false;
-	for (int seed = 0; seed < n; seed++) {
-		if (!fg[static_cast<size_t>(seed)] || seen[static_cast<size_t>(seed)])
-			continue;
-		std::vector<int> pix;
-		pix.push_back(seed);
-		seen[static_cast<size_t>(seed)] = 1;
-		for (size_t qi = 0; qi < pix.size(); qi++) {
-			const int i = pix[qi];
-			const int x = i % width;
-			const int y = i / width;
-			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
-					   y + 1 < height ? i + width : -1};
-			for (int nbi : nb) {
-				if (nbi < 0 || !fg[static_cast<size_t>(nbi)] || seen[static_cast<size_t>(nbi)])
-					continue;
-				seen[static_cast<size_t>(nbi)] = 1;
-				pix.push_back(nbi);
-			}
-		}
-		const int count = static_cast<int>(pix.size());
-		if (count < k_min) {
-			saw_small = true;
-			continue;
-		}
-		saw_large = true;
-		int boundary = 0;
-		int supported = 0;
-		int loop_edge = 0;
-		int64_t luma_sum = 0;
-		for (int i : pix) {
-			luma_sum += lum[static_cast<size_t>(i)];
-			const int x = i % width;
-			const int y = i / width;
-			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
-					   y + 1 < height ? i + width : -1};
-			bool is_boundary = false;
-			bool on_loop = false;
-			bool edge_nb = mag[static_cast<size_t>(i)] >= k_edge;
-			for (int nbi : nb) {
-				if (nbi < 0 || !fg[static_cast<size_t>(nbi)])
-					is_boundary = true;
-				if (nbi < 0 || !inside[static_cast<size_t>(nbi)])
-					on_loop = true;
-				if (nbi >= 0 && mag[static_cast<size_t>(nbi)] >= k_edge)
-					edge_nb = true;
-			}
-			if (!is_boundary)
+	/* Trimap: outside the loop is hard background, inside is probable
+	 * foreground. As a seed, inside pixels within 2 working pixels of the
+	 * loop boundary start as probable background (distance by BFS from
+	 * outside): a loose loop's rim is usually background, and seeding the
+	 * background model with it stops the foreground model from claiming
+	 * the background inside the loop. The cut can flip the rim back when
+	 * the element really does fill the loop. */
+	std::vector<int> dist(static_cast<size_t>(wn), -1);
+	{
+		std::vector<int> q;
+		for (int i = 0; i < wn; i++) {
+			if (w_in[static_cast<size_t>(i)])
 				continue;
-			boundary++;
-			if (edge_nb)
-				supported++;
-			if (on_loop)
-				loop_edge++;
+			dist[static_cast<size_t>(i)] = 0;
+			q.push_back(i);
 		}
-		if (boundary < 1)
-			continue;
-		const int64_t mean = luma_sum / count;
-		int64_t dev = 0;
-		for (int i : pix)
-			dev += std::abs(static_cast<int64_t>(lum[static_cast<size_t>(i)]) - mean);
-		if (dev / count >= k_mad_max)
-			continue;
-		const bool huge = static_cast<int64_t>(count) * 100 > static_cast<int64_t>(inside_count) * 97;
-		if (!huge && loop_edge * 2 >= boundary)
-			continue;
-		if (supported * 20 < boundary * 7)
-			continue;
-		const bool better = best.empty() || supported * best_boundary > best_supported * boundary ||
-				    (supported * best_boundary == best_supported * boundary && count > best_count);
-		if (!better)
-			continue;
-		best.swap(pix);
-		best_count = count;
-		best_supported = supported;
-		best_boundary = boundary;
+		for (size_t qi = 0; qi < q.size(); qi++) {
+			const int i = q[qi];
+			const int x = i % ww;
+			const int y = i / ww;
+			const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < ww ? i + 1 : -1, y > 0 ? i - ww : -1,
+					   y + 1 < wh ? i + ww : -1};
+			for (int nbi : nb) {
+				if (nbi >= 0 && dist[static_cast<size_t>(nbi)] < 0) {
+					dist[static_cast<size_t>(nbi)] = dist[static_cast<size_t>(i)] + 1;
+					q.push_back(nbi);
+				}
+			}
+		}
 	}
-	if (best.empty()) {
-		pick.status = saw_small && !saw_large ? MaskMagicPickStatus::TooSmall : MaskMagicPickStatus::NoEdge;
-		return pick;
+	bool any_deep = false;
+	for (int i = 0; i < wn; i++) {
+		if (w_in[static_cast<size_t>(i)] && dist[static_cast<size_t>(i)] > 2)
+			any_deep = true;
+	}
+	std::vector<uint8_t> label(static_cast<size_t>(wn));
+	for (int i = 0; i < wn; i++)
+		label[static_cast<size_t>(i)] =
+			(w_in[static_cast<size_t>(i)] && (!any_deep || dist[static_cast<size_t>(i)] > 2)) ? 1 : 0;
+
+	GcGmm fg_model, bg_model;
+	const int source = wn;
+	const int sink = wn + 1;
+	for (int it = 0; it < k_iterations; it++) {
+		std::vector<std::array<float, 3>> fg_samples, bg_samples;
+		for (int i = 0; i < wn; i++) {
+			if (label[static_cast<size_t>(i)])
+				fg_samples.push_back(col[static_cast<size_t>(i)]);
+			else
+				bg_samples.push_back(col[static_cast<size_t>(i)]);
+		}
+		fg_model = gc_fit_gmm(fg_samples, k_components);
+		bg_model = gc_fit_gmm(bg_samples, k_components);
+		if (fg_model.empty() || bg_model.empty()) {
+			pick.status = MaskMagicPickStatus::NoEdge;
+			return pick;
+		}
+
+		GcGraph graph(wn + 2);
+		for (int y = 0; y < wh; y++) {
+			for (int x = 0; x < ww; x++) {
+				const int i = y * ww + x;
+				double d_fg, d_bg;
+				if (!w_in[static_cast<size_t>(i)]) {
+					d_fg = k_inf;
+					d_bg = 0;
+					graph.keep[static_cast<size_t>(i)] = 1;
+				} else {
+					const float *z = col[static_cast<size_t>(i)].data();
+					const double raw_fg = fg_model.neglog(z);
+					const double raw_bg = bg_model.neglog(z);
+					const double lo = std::min(raw_fg, raw_bg);
+					d_fg = std::min(raw_fg - lo, k_cost_cap);
+					d_bg = std::min(raw_bg - lo, k_cost_cap);
+				}
+				/* Source side = foreground: cutting source->i costs
+				 * the background cost, cutting i->sink costs the
+				 * foreground cost. */
+				if (d_bg > 0)
+					graph.add_directed(source, i, d_bg);
+				if (d_fg > 0)
+					graph.add_directed(i, sink, d_fg);
+				if (x + 1 < ww && smooth_r[static_cast<size_t>(i)] > 1e-9)
+					graph.add_cut_edge(i, i + 1, smooth_r[static_cast<size_t>(i)]);
+				if (y + 1 < wh && smooth_d[static_cast<size_t>(i)] > 1e-9)
+					graph.add_cut_edge(i, i + ww, smooth_d[static_cast<size_t>(i)]);
+			}
+		}
+		const std::vector<char> side = graph.mincut_source_side(source, sink);
+		int changed = 0;
+		for (int i = 0; i < wn; i++) {
+			const uint8_t nl = (!w_in[static_cast<size_t>(i)] || side[static_cast<size_t>(i)]) ? 1 : 0;
+			/* Hard background stays background whatever the cut did. */
+			const uint8_t fixed = w_in[static_cast<size_t>(i)] ? nl : 0;
+			if (fixed != label[static_cast<size_t>(i)])
+				changed++;
+			label[static_cast<size_t>(i)] = fixed;
+		}
+		if (changed * 500 < wn)
+			break;
 	}
 
+	/* Fill holes enclosed inside the loop: flood in from the window border
+	 * through background; inside-loop pixels it cannot reach are holes. */
+	{
+		std::vector<uint8_t> reach(static_cast<size_t>(wn), 0);
+		std::vector<int> flood;
+		auto seed = [&](int i) {
+			if (!label[static_cast<size_t>(i)] && !reach[static_cast<size_t>(i)]) {
+				reach[static_cast<size_t>(i)] = 1;
+				flood.push_back(i);
+			}
+		};
+		for (int x = 0; x < ww; x++) {
+			seed(x);
+			seed((wh - 1) * ww + x);
+		}
+		for (int y = 0; y < wh; y++) {
+			seed(y * ww);
+			seed(y * ww + ww - 1);
+		}
+		for (size_t qi = 0; qi < flood.size(); qi++) {
+			const int i = flood[qi];
+			const int x = i % ww;
+			const int y = i / ww;
+			if (x > 0)
+				seed(i - 1);
+			if (x + 1 < ww)
+				seed(i + 1);
+			if (y > 0)
+				seed(i - ww);
+			if (y + 1 < wh)
+				seed(i + ww);
+		}
+		for (int i = 0; i < wn; i++) {
+			if (w_in[static_cast<size_t>(i)] && !reach[static_cast<size_t>(i)])
+				label[static_cast<size_t>(i)] = 1;
+		}
+	}
+
+	/* Map back to full resolution (nearest), then re-decide a 1-cell band
+	 * around the boundary with the final colour models when downsampled. */
 	std::vector<uint8_t> solid(static_cast<size_t>(n), 0);
-	for (int i : best)
-		solid[static_cast<size_t>(i)] = 1;
-	std::vector<uint8_t> reach(static_cast<size_t>(n), 0);
-	std::vector<int> flood;
-	flood.reserve(static_cast<size_t>(n / 8));
-	for (int x = 0; x < width; x++) {
-		const int top = x;
-		const int bot = (height - 1) * width + x;
-		if (!solid[static_cast<size_t>(top)] && !reach[static_cast<size_t>(top)]) {
-			reach[static_cast<size_t>(top)] = 1;
-			flood.push_back(top);
-		}
-		if (!solid[static_cast<size_t>(bot)] && !reach[static_cast<size_t>(bot)]) {
-			reach[static_cast<size_t>(bot)] = 1;
-			flood.push_back(bot);
+	for (int y = 0; y < win_h; y++) {
+		const int wy = std::min(y / step, wh - 1);
+		for (int x = 0; x < win_w; x++) {
+			const int wx = std::min(x / step, ww - 1);
+			if (label[static_cast<size_t>(wy) * ww + wx])
+				solid[static_cast<size_t>(wy0 + y) * width + (wx0 + x)] = 1;
 		}
 	}
-	for (int y = 0; y < height; y++) {
-		const int left = y * width;
-		const int right = y * width + width - 1;
-		if (!solid[static_cast<size_t>(left)] && !reach[static_cast<size_t>(left)]) {
-			reach[static_cast<size_t>(left)] = 1;
-			flood.push_back(left);
-		}
-		if (!solid[static_cast<size_t>(right)] && !reach[static_cast<size_t>(right)]) {
-			reach[static_cast<size_t>(right)] = 1;
-			flood.push_back(right);
+	if (step > 1 && !fg_model.empty() && !bg_model.empty()) {
+		const std::vector<uint8_t> up = solid;
+		for (int y = 0; y < win_h; y++) {
+			for (int x = 0; x < win_w; x++) {
+				const int fi = (wy0 + y) * width + (wx0 + x);
+				if (!inside[static_cast<size_t>(fi)])
+					continue;
+				bool boundary = false;
+				if (x > 0 && up[static_cast<size_t>(fi - 1)] != up[static_cast<size_t>(fi)])
+					boundary = true;
+				if (x + 1 < win_w && up[static_cast<size_t>(fi + 1)] != up[static_cast<size_t>(fi)])
+					boundary = true;
+				if (y > 0 && up[static_cast<size_t>(fi - width)] != up[static_cast<size_t>(fi)])
+					boundary = true;
+				if (y + 1 < win_h && up[static_cast<size_t>(fi + width)] != up[static_cast<size_t>(fi)])
+					boundary = true;
+				if (!boundary)
+					continue;
+				const uint8_t *px = bgra + static_cast<size_t>(wy0 + y) * stride + static_cast<size_t>(wx0 + x) * 4;
+				const float z[3] = {static_cast<float>(px[2]), static_cast<float>(px[1]),
+						    static_cast<float>(px[0])};
+				solid[static_cast<size_t>(fi)] = fg_model.neglog(z) <= bg_model.neglog(z) ? 1 : 0;
+			}
 		}
 	}
-	for (size_t qi = 0; qi < flood.size(); qi++) {
-		const int i = flood[qi];
-		const int x = i % width;
-		const int y = i / width;
-		const int nb[4] = {x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1,
-				   y + 1 < height ? i + width : -1};
-		for (int nbi : nb) {
-			if (nbi < 0 || solid[static_cast<size_t>(nbi)] || reach[static_cast<size_t>(nbi)])
-				continue;
-			reach[static_cast<size_t>(nbi)] = 1;
-			flood.push_back(nbi);
-		}
-	}
+
 	int mask_pixels = 0;
 	for (int i = 0; i < n; i++) {
-		if (!inside[static_cast<size_t>(i)] || reach[static_cast<size_t>(i)])
-			continue;
-		solid[static_cast<size_t>(i)] = 1;
-		mask_pixels++;
+		if (solid[static_cast<size_t>(i)] && inside[static_cast<size_t>(i)])
+			mask_pixels++;
+	}
+	if (mask_pixels == 0) {
+		pick.status = MaskMagicPickStatus::NoEdge;
+		return pick;
 	}
 	if (mask_pixels < k_min || static_cast<int64_t>(mask_pixels) * 1000 < static_cast<int64_t>(inside_count) * 4) {
 		pick.status = MaskMagicPickStatus::TooSmall;

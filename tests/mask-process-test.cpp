@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -918,6 +919,114 @@ int main()
 		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 271, 271));
 		CHECK(pick.status == MaskMagicPickStatus::TooBig);
 		CHECK(pick.gray.empty());
+	}
+
+	/* GrabCut pick: cases the previous median/threshold picker failed. */
+
+	auto coverage = [](const MaskMagicPick &pick, int w, int x0, int y0, int x1, int y1, int h) {
+		if (pick.gray.empty())
+			return std::pair<int, int>(0, 0);
+		int covered = 0;
+		int outside = 0;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const bool on = pick.gray[static_cast<size_t>(y) * w + x] >= 128;
+				if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+					if (on)
+						covered++;
+				} else if (on) {
+					outside++;
+				}
+			}
+		}
+		return std::pair<int, int>(covered, outside);
+	};
+
+	{
+		/* (a) Smooth gradient foreground, black-to-white on mid-grey: the
+		 * old picker thresholded against the background median, splitting
+		 * the ramp and picking at most one side of it. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 0, 0, 63, 63, 128, 128, 128);
+		for (int y = 16; y <= 47; y++) {
+			for (int x = 16; x <= 47; x++) {
+				uint8_t *px = bgra.data() + (static_cast<size_t>(y) * w + x) * 4;
+				const uint8_t v = static_cast<uint8_t>((x - 16) * 255 / 31);
+				px[0] = v;
+				px[1] = v;
+				px[2] = v;
+				px[3] = 255;
+			}
+		}
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 40);
+	}
+
+	{
+		/* (b) Two-tone checker foreground (luma MAD is ~127, far above the
+		 * old picker's 40 gate) on a mid-grey background. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 0, 0, 63, 63, 128, 128, 128);
+		for (int y = 16; y <= 47; y++) {
+			for (int x = 16; x <= 47; x++) {
+				const bool white = ((x - 16) / 8 + (y - 16) / 8) % 2 == 0;
+				uint8_t *px = bgra.data() + (static_cast<size_t>(y) * w + x) * 4;
+				px[0] = white ? 255 : 0;
+				px[1] = white ? 255 : 0;
+				px[2] = white ? 255 : 0;
+				px[3] = 255;
+			}
+		}
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 40);
+	}
+
+	{
+		/* (c) Colour-only edge: red (255,0,0) and green (0,131,0) have the
+		 * same luma (76), so a luma Sobel sees no edge at all. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		paint_bgra(bgra, w, 0, 0, 63, 63, 0, 131, 0);
+		paint_bgra(bgra, w, 16, 16, 47, 47, 255, 0, 0);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 40);
+	}
+
+	{
+		/* (d) Non-uniform (gradient) background, solid object: the outside
+		 * ring has no single median colour. */
+		const int w = 64;
+		const int h = 64;
+		std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4, 0);
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				uint8_t *px = bgra.data() + (static_cast<size_t>(y) * w + x) * 4;
+				px[0] = 100;
+				px[1] = static_cast<uint8_t>(30 + y * 2);
+				px[2] = static_cast<uint8_t>(30 + x * 2);
+				px[3] = 255;
+			}
+		}
+		paint_bgra(bgra, w, 16, 16, 47, 47, 240, 220, 0);
+		const auto pick = mask_magic_pick(bgra.data(), w * 4, w, h, square_loop(8, 8, 55, 55));
+		CHECK(pick.status == MaskMagicPickStatus::Ok);
+		const auto cov = coverage(pick, w, 16, 16, 47, 47, h);
+		CHECK(cov.first >= 900);
+		CHECK(cov.second < 80);
 	}
 
 	{

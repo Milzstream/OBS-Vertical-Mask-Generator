@@ -154,8 +154,9 @@ void mask_fill_polygon(std::vector<uint8_t> &gray, int width, int height, const 
 /* Reject a prompted pick that is unsure, a sliver, or the whole crop. */
 bool mask_magic_pick_ok(int mask_pixels, int crop_pixels, float iou);
 
-/* Classical pick inside a loop. Color against the outside margin, kept only if a
- * hard luma edge bounds it. Does not call ONNX. Misses leave gray empty. */
+/* GrabCut pick inside a loop (Rother et al. 2004): outside the loop is hard
+ * background, inside is probable foreground, 5-component GMMs per side and
+ * iterated graph cuts. Does not call ONNX. Misses leave gray empty. */
 enum class MaskMagicPickStatus { Ok, NoEdge, TooSmall, TooBig, Failed };
 
 struct MaskMagicPick {
