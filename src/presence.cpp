@@ -148,6 +148,24 @@ float match_still(const std::vector<uint8_t> &luma, int sw, int sh, const std::v
 	return score;
 }
 
+bool write_href1(const std::string &path, const std::vector<uint8_t> &luma, const std::vector<uint8_t> &band, int w,
+		 int h)
+{
+	if (path.empty())
+		return true;
+	const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+	if (w < 1 || h < 1 || luma.size() < n || band.size() < n)
+		return false;
+	FILE *f = os_fopen(path.c_str(), "wb");
+	if (!f)
+		return false;
+	const uint32_t wh[2] = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
+	const bool ok = fwrite(k_ref_magic, 1, 6, f) == 6 && fwrite(wh, 4, 2, f) == 2 &&
+			fwrite(luma.data(), 1, n, f) == n && fwrite(band.data(), 1, n, f) == n;
+	fclose(f);
+	return ok;
+}
+
 bool write_href2(const std::string &path, const std::vector<uint8_t> &apply, int aw, int ah,
 		 const std::vector<hud_mask_still> &extras)
 {
@@ -827,17 +845,67 @@ bool hud_mask_presence_save_ref(hud_mask *ctx, const uint8_t *luma, const uint8_
 		if (!ctx->mask_path.empty())
 			path = ref_path_for_mask(ctx->mask_path);
 	}
-	if (path.empty())
-		return true;
-	FILE *f = os_fopen(path.c_str(), "wb");
-	if (!f)
+	return write_href1(path, lum, band, width, height);
+}
+
+bool hud_mask_presence_drop_extra(hud_mask *ctx, int index)
+{
+	if (!ctx || index < 0)
 		return false;
-	const uint32_t wh[2] = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
-	const bool ok = fwrite(k_ref_magic, 1, 6, f) == 6 && fwrite(wh, 4, 2, f) == 2 &&
-			fwrite(lum.data(), 1, lum.size(), f) == lum.size() &&
-			fwrite(band.data(), 1, band.size(), f) == band.size();
-	fclose(f);
-	return ok;
+	std::string path;
+	std::vector<uint8_t> apply;
+	std::vector<uint8_t> band;
+	std::vector<uint8_t> mask;
+	std::vector<hud_mask_still> extras;
+	int w = 0;
+	int h = 0;
+	int kept = 0;
+	uint32_t gen = 0;
+	bool need_band = false;
+	hud_mask_still removed;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		if (!ctx->ref_valid || index >= static_cast<int>(ctx->ref_extra.size()))
+			return false;
+		removed = ctx->ref_extra[static_cast<size_t>(index)];
+		ctx->ref_extra.erase(ctx->ref_extra.begin() + index);
+		ctx->ref_gen++;
+		gen = ctx->ref_gen;
+		apply = ctx->ref_luma;
+		band = ctx->ref_band;
+		w = ctx->ref_w;
+		h = ctx->ref_h;
+		extras = ctx->ref_extra;
+		kept = 1 + static_cast<int>(extras.size());
+		need_band = extras.empty() && band.size() != apply.size() && ctx->mask_w == w && ctx->mask_h == h &&
+			    ctx->mask_gray.size() == apply.size();
+		if (need_band)
+			mask = ctx->mask_gray;
+		if (!ctx->mask_path.empty())
+			path = ref_path_for_mask(ctx->mask_path);
+	}
+	if (need_band) {
+		const int inset = std::max(1, std::min(w, h) / 12);
+		mask_presence_band(mask, &apply, w, h, inset, band);
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		if (ctx->ref_extra.empty())
+			ctx->ref_band = band;
+	}
+	if (extras.empty() && band.size() != apply.size())
+		band.assign(apply.size(), 0);
+	const bool ok = extras.empty() ? write_href1(path, apply, band, w, h)
+					: write_href2(path, apply, w, h, extras);
+	if (!ok) {
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		if (ctx->ref_gen == gen && index <= static_cast<int>(ctx->ref_extra.size())) {
+			ctx->ref_extra.insert(ctx->ref_extra.begin() + index, std::move(removed));
+			ctx->ref_gen++;
+		}
+		obs_log(LOG_ERROR, "auto-hide failed to save labeled still '%s'", path.c_str());
+		return false;
+	}
+	obs_log(LOG_INFO, "auto-hide removed a labeled still (%d of %d)", kept, k_mask_presence_still_cap);
+	return true;
 }
 
 void hud_mask_presence_tick_fade(hud_mask *ctx, float seconds)

@@ -79,3 +79,4 @@ void hud_mask_unload_effects(void);
 
 obs_source_t *hud_mask_get_target(hud_mask *ctx);
 void hud_mask_set_cutout(hud_mask *ctx, const char *path, int left, int top, int right, int bottom);
+bool hud_mask_queue_mark(hud_mask *ctx, hud_mask_mark mark);

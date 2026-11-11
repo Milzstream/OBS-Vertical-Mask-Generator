@@ -52,7 +52,7 @@ Every frame (GPU), per visible Source Cutout
 
 ![Fade under Auto-hide on the properties sheet](images/properties-scene.png)
 
-Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide-on instances by sampled target and does **one** downsample/readback per target per cycle (round-robin when several targets are live). Each mask scores the **processed** paint (expand / feather) against the Draw mask still (Pearson on edges, small translation search). Interiors can change. Hidden scene items are skipped. Fade and a match slider live on the properties pane. Mark show and Mark hide, next to the checkbox, save extra examples of that crop (at most 8). The Apply still is slot 0 and is never replaced. A matching hide still forces hide; otherwise a matching show still forces show. Both still wait for the 3-frame streak. If no extra matches, the Apply still is the gate. A new Apply clears the extras. The scene-item eyeball is never toggled; the source draws transparent instead.
+Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide-on instances by sampled target and does **one** downsample/readback per target per cycle (round-robin when several targets are live). Each mask scores the **processed** paint (expand / feather) against the Draw mask still (Pearson on edges, small translation search). Interiors can change. Hidden scene items are skipped. Fade and a match slider live on the properties pane. Saved frames, under the checkbox, opens a window that saves extra examples of that crop (at most 8) and can remove them. The Apply still is shown there and is never replaced. A matching hide still forces hide; otherwise a matching show still forces show. Both still wait for the 3-frame streak. If no extra matches, the Apply still is the gate. A new Apply clears the extras. The scene-item eyeball is never toggled; the source draws transparent instead.
 
 ## Highlight tools (setup only)
 
@@ -69,7 +69,7 @@ On the source:
 - Mask PNG path (`masks/<uuid>.png`, or an older absolute path whose file name already matches the source uuid)
 - Expand, feather
 - Auto-hide, fade ms, match percent
-- Presence still (`masks/<uuid>.ref`) next to the mask PNG. `HREF1` is the Apply still. `HREF2` adds labeled crops. A new Apply rewrites `HREF1` and drops the extras.
+- Presence still (`masks/<uuid>.ref`) next to the mask PNG. `HREF1` is the Apply still. `HREF2` adds labeled crops. A new Apply rewrites `HREF1` and drops the extras. Removing the last extra also rewrites `HREF1`.
 
 ## Performance budget
 

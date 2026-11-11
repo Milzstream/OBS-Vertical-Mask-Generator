@@ -41,6 +41,8 @@ target_sources(
           src/hud-mask.hpp
           src/cutout-editor.cpp
           src/cutout-editor.hpp
+          src/saved-frames.cpp
+          src/saved-frames.hpp
           src/mask-process.cpp
           src/mask-process.hpp
           src/magic-sam.cpp
