@@ -52,6 +52,12 @@ struct hud_mask {
 	std::vector<hud_mask_still> ref_extra;
 	hud_mask_mark mark_pending = hud_mask_mark::none;
 	uint32_t ref_gen = 0;
+	std::vector<uint8_t> live_luma;
+	int live_w = 0;
+	int live_h = 0;
+	uint32_t live_gen = 0;
+	int last_labeled = -1;
+	uint32_t label_gen = 0;
 
 	bool presence_shown = true;
 	int presence_streak = 0;

@@ -286,17 +286,23 @@ void label_crop(hud_mask *ctx, const uint8_t *luma, int w, int h, const std::vec
 		std::lock_guard<std::mutex> lock(ctx->data_mu);
 		if (ctx->ref_gen != gen || !ctx->ref_valid)
 			return;
+		int labeled = -1;
 		if (slot >= 1 && slot <= static_cast<int>(ctx->ref_extra.size())) {
 			ctx->ref_extra[static_cast<size_t>(slot - 1)] = neu;
+			labeled = slot - 1;
 			replaced = true;
 		} else if (static_cast<int>(ctx->ref_extra.size()) + 1 < k_mask_presence_still_cap) {
 			ctx->ref_extra.push_back(neu);
+			labeled = static_cast<int>(ctx->ref_extra.size()) - 1;
 		} else if (!ctx->ref_extra.empty()) {
 			ctx->ref_extra[0] = neu;
+			labeled = 0;
 			replaced = true;
 		} else {
 			return;
 		}
+		ctx->last_labeled = labeled;
+		ctx->label_gen++;
 		if (ctx->mark_pending == mark)
 			ctx->mark_pending = hud_mask_mark::none;
 		ctx->ref_gen++;
@@ -394,6 +400,14 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 		}
 	}
 
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		ctx->live_luma = roi;
+		ctx->live_w = rw;
+		ctx->live_h = rh;
+		ctx->live_gen++;
+	}
+
 	std::vector<uint8_t> processed = std::move(mask_gray);
 	mask_presence_prepare_mask(processed, mask_w, mask_h, expand, feather);
 	std::vector<uint8_t> mask_s;
@@ -432,8 +446,9 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 			labels[i] = extras[i].hide ? 1 : 0;
 			scores[i] = match_still(extras[i].luma, extras[i].w, extras[i].h, roi, rim, rw, rh);
 		}
-		const MaskPresenceVerdict verdict = mask_presence_override(
-			scores.data(), labels.data(), static_cast<int>(scores.size()), mask_presence_threshold(match_pct));
+		const MaskPresenceVerdict verdict =
+			mask_presence_override(scores.data(), labels.data(), static_cast<int>(scores.size()),
+					       k_mask_presence_snap_threshold);
 		if (verdict == MaskPresenceVerdict::ForceHide) {
 			apply_score(ctx, k_force_hide_score, match_pct);
 			return;

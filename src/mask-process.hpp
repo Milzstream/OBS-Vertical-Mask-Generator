@@ -130,6 +130,9 @@ bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, 
 
 constexpr int k_mask_presence_still_cap = 8;
 
+/* Saved snaps do not use the Match slider. That slider only gates the Apply still. */
+constexpr float k_mask_presence_snap_threshold = 0.5f;
+
 enum class MaskPresenceVerdict { UseGate, ForceShow, ForceHide };
 
 /* Extra stills only, not the Apply still. A hide score at or above threshold

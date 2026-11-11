@@ -626,6 +626,7 @@ int main()
 
 	/* Labeled stills: hide beats show. The Apply still is not in this list. */
 	{
+		CHECK(k_mask_presence_snap_threshold == 0.5f);
 		CHECK(mask_presence_override(nullptr, nullptr, 0, 0.5f) == MaskPresenceVerdict::UseGate);
 		const float empty_scores[] = {0.9f};
 		CHECK(mask_presence_override(empty_scores, nullptr, 1, 0.5f) == MaskPresenceVerdict::UseGate);

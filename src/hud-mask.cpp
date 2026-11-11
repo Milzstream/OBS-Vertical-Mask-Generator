@@ -913,10 +913,11 @@ obs_properties_t *hud_mask_properties(void *data)
 	const std::string hide_label = std::string(obs_module_text("HUDMask.AutoHide")) +
 				       obs_module_text("HUDMask.AutoHide.Experimental");
 	obs_property_t *hide = obs_properties_add_bool(props, k_auto_hide, hide_label.c_str());
-	obs_property_set_long_description(hide, obs_module_text("HUDMask.AutoHide.Help"));
 	obs_property_set_modified_callback2(hide, auto_hide_modified, ctx);
-	obs_properties_add_button2(props, k_saved_frames, obs_module_text("HUDMask.AutoHide.SavedFrames"),
-				   saved_frames_clicked, ctx);
+	obs_property_t *frames = obs_properties_add_button2(props, k_saved_frames,
+							    obs_module_text("HUDMask.AutoHide.SavedFrames"),
+							    saved_frames_clicked, ctx);
+	obs_property_set_long_description(frames, obs_module_text("HUDMask.AutoHide.SavedFrames.Help"));
 	obs_property_t *fade = obs_properties_add_int(props, k_fade, obs_module_text("HUDMask.AutoHide.Fade"), 0, 2000, 50);
 	obs_property_int_set_suffix(fade, " ms");
 	obs_property_set_long_description(fade, obs_module_text("HUDMask.AutoHide.Fade.Help"));
