@@ -604,6 +604,77 @@ int main()
 		g = {};
 		CHECK(!mask_presence_gate(g, 0.0f, 0, 3));
 		CHECK(g.shown);
+		CHECK(!mask_presence_gate(g, 0.0f, 0, 3));
+		CHECK(!mask_presence_gate(g, 0.0f, 0, 3));
+		CHECK(g.shown);
+
+		g = {};
+		CHECK(!mask_presence_gate(g, -1.0f, 0, 3));
+		CHECK(!mask_presence_gate(g, -1.0f, 0, 3));
+		CHECK(g.shown && g.streak == 2);
+		CHECK(mask_presence_gate(g, -1.0f, 0, 3));
+		CHECK(!g.shown && g.streak == 0);
+
+		g = {};
+		g.shown = false;
+		CHECK(!mask_presence_gate(g, 1.0f, 100, 3));
+		CHECK(g.streak == 1);
+		CHECK(!mask_presence_gate(g, 1.0f, 100, 3));
+		CHECK(mask_presence_gate(g, 1.0f, 100, 3));
+		CHECK(g.shown && g.streak == 0);
+	}
+
+	/* Labeled stills: hide beats show. The Apply still is not in this list. */
+	{
+		CHECK(mask_presence_override(nullptr, nullptr, 0, 0.5f) == MaskPresenceVerdict::UseGate);
+		const float empty_scores[] = {0.9f};
+		CHECK(mask_presence_override(empty_scores, nullptr, 1, 0.5f) == MaskPresenceVerdict::UseGate);
+		CHECK(mask_presence_override(nullptr, reinterpret_cast<const uint8_t *>(""), 1, 0.5f) ==
+		      MaskPresenceVerdict::UseGate);
+
+		const float both[] = {0.95f, 0.60f, 0.99f};
+		const uint8_t both_hide[] = {0, 1, 0};
+		CHECK(mask_presence_override(both, both_hide, 3, 0.50f) == MaskPresenceVerdict::ForceHide);
+
+		const float show_only[] = {0.20f, 0.80f};
+		const uint8_t show_hide[] = {1, 0};
+		CHECK(mask_presence_override(show_only, show_hide, 2, 0.50f) == MaskPresenceVerdict::ForceShow);
+
+		const float below[] = {0.49f, 0.10f};
+		const uint8_t below_hide[] = {1, 0};
+		CHECK(mask_presence_override(below, below_hide, 2, 0.50f) == MaskPresenceVerdict::UseGate);
+
+		const float edge[] = {0.50f};
+		const uint8_t edge_hide[] = {1};
+		CHECK(mask_presence_override(edge, edge_hide, 1, 0.50f) == MaskPresenceVerdict::ForceHide);
+
+		const float neg[] = {-1.0f, -0.2f};
+		const uint8_t neg_hide[] = {1, 0};
+		CHECK(mask_presence_override(neg, neg_hide, 2, 0.0f) == MaskPresenceVerdict::UseGate);
+
+		float nan_scores[] = {std::nanf(""), 0.2f};
+		const uint8_t nan_hide[] = {1, 0};
+		CHECK(mask_presence_override(nan_scores, nan_hide, 2, 0.5f) == MaskPresenceVerdict::UseGate);
+	}
+
+	/* Full list replaces the closest same label. Slot 0 is never replaced. */
+	{
+		const uint8_t labels[] = {0, 0, 1, 0, 1};
+		const float scores[] = {0.99f, 0.20f, 0.80f, 0.70f, 0.80f};
+		CHECK(mask_presence_still_slot(2, 8, scores, labels, 0) == -1);
+		CHECK(mask_presence_still_slot(5, 5, scores, labels, 0) == 3);
+		CHECK(mask_presence_still_slot(5, 5, scores, labels, 1) == 2);
+		CHECK(mask_presence_still_slot(5, 5, scores, labels, 0) != 0);
+
+		const float tied[] = {0.1f, 0.4f, 0.4f};
+		const uint8_t tied_hide[] = {0, 1, 1};
+		CHECK(mask_presence_still_slot(3, 3, tied, tied_hide, 1) == 1);
+
+		const float fallback[] = {0.9f, 0.2f, 0.6f};
+		const uint8_t shows[] = {0, 0, 0};
+		CHECK(mask_presence_still_slot(3, 3, fallback, shows, 1) == 2);
+		CHECK(mask_presence_still_slot(4, 1, nullptr, labels, 0) == 1);
+		CHECK(mask_presence_still_slot(1, 1, scores, labels, 1) == -1);
 	}
 
 	/* Blob outline is the rim of the paint, not the interior. */

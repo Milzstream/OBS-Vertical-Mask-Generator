@@ -31,7 +31,10 @@ namespace {
 constexpr int k_hysteresis = 3;
 constexpr int k_ds_max = 960;
 constexpr float k_cycle_sec = 0.10f;
+constexpr float k_force_hide_score = -1.0f;
+constexpr float k_force_show_score = 1.0f;
 constexpr const char k_ref_magic[6] = {'H', 'M', 'R', 'E', 'F', '1'};
+constexpr const char k_ref_magic2[6] = {'H', 'M', 'R', 'E', 'F', '2'};
 
 std::mutex g_mu;
 std::condition_variable g_score_cv;
@@ -132,6 +135,169 @@ struct ScoreGuard {
 	~ScoreGuard() { end_score(ctx); }
 };
 
+float match_still(const std::vector<uint8_t> &luma, int sw, int sh, const std::vector<uint8_t> &roi,
+		  const std::vector<uint8_t> &rim, int rw, int rh)
+{
+	if (sw < 1 || sh < 1 || luma.size() < static_cast<size_t>(sw) * static_cast<size_t>(sh))
+		return -1.f;
+	std::vector<uint8_t> scaled;
+	mask_resize_luma(luma, sw, sh, scaled, rw, rh);
+	float score = 0.f;
+	if (!mask_presence_match(scaled, roi, rim, rw, rh, 3, &score))
+		return -1.f;
+	return score;
+}
+
+bool write_href2(const std::string &path, const std::vector<uint8_t> &apply, int aw, int ah,
+		 const std::vector<hud_mask_still> &extras)
+{
+	if (path.empty())
+		return true;
+	FILE *f = os_fopen(path.c_str(), "wb");
+	if (!f)
+		return false;
+	const uint8_t count = static_cast<uint8_t>(1 + extras.size());
+	bool ok = fwrite(k_ref_magic2, 1, 6, f) == 6 && fwrite(&count, 1, 1, f) == 1;
+	auto write_one = [&](uint8_t label, int w, int h, const uint8_t *luma) {
+		if (w < 1 || h < 1 || !luma)
+			return false;
+		const uint32_t wh[2] = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
+		const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+		return fwrite(&label, 1, 1, f) == 1 && fwrite(wh, 4, 2, f) == 2 && fwrite(luma, 1, n, f) == n;
+	};
+	ok = ok && write_one(0, aw, ah, apply.data());
+	for (const hud_mask_still &e : extras) {
+		if (!ok)
+			break;
+		ok = write_one(e.hide ? 1 : 0, e.w, e.h, e.luma.data());
+	}
+	fclose(f);
+	return ok;
+}
+
+bool read_href2(FILE *f, std::vector<uint8_t> &apply, int &aw, int &ah, std::vector<hud_mask_still> &extras)
+{
+	uint8_t count = 0;
+	if (!f || fread(&count, 1, 1, f) != 1 || count < 1 || count > k_mask_presence_still_cap)
+		return false;
+	apply.clear();
+	extras.clear();
+	aw = 0;
+	ah = 0;
+	for (uint8_t i = 0; i < count; i++) {
+		uint8_t label = 0;
+		uint32_t wh[2] = {0, 0};
+		if (fread(&label, 1, 1, f) != 1 || fread(wh, 4, 2, f) != 2 || label > 1)
+			return false;
+		const int w = static_cast<int>(wh[0]);
+		const int h = static_cast<int>(wh[1]);
+		if (w < 1 || h < 1 || w > 8192 || h > 8192)
+			return false;
+		const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+		std::vector<uint8_t> luma(n);
+		if (fread(luma.data(), 1, n, f) != n)
+			return false;
+		if (i == 0) {
+			if (label != 0)
+				return false;
+			apply = std::move(luma);
+			aw = w;
+			ah = h;
+		} else {
+			hud_mask_still st;
+			st.hide = label != 0;
+			st.w = w;
+			st.h = h;
+			st.luma = std::move(luma);
+			extras.push_back(std::move(st));
+		}
+	}
+	return aw >= 1 && !apply.empty();
+}
+
+void label_crop(hud_mask *ctx, const uint8_t *luma, int w, int h, const std::vector<uint8_t> &rim)
+{
+	if (!ctx || !luma || w < 8 || h < 8)
+		return;
+	hud_mask_mark mark = hud_mask_mark::none;
+	uint32_t gen = 0;
+	std::vector<uint8_t> apply;
+	int aw = 0;
+	int ah = 0;
+	std::vector<hud_mask_still> extras;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		if (!ctx->ref_valid || ctx->mark_pending == hud_mask_mark::none)
+			return;
+		mark = ctx->mark_pending;
+		gen = ctx->ref_gen;
+		apply = ctx->ref_luma;
+		aw = ctx->ref_w;
+		ah = ctx->ref_h;
+		extras = ctx->ref_extra;
+	}
+
+	const int count = 1 + static_cast<int>(extras.size());
+	std::vector<float> scores(static_cast<size_t>(count), -1.f);
+	std::vector<uint8_t> labels(static_cast<size_t>(count), 0);
+	const std::vector<uint8_t> roi(luma, luma + static_cast<size_t>(w) * static_cast<size_t>(h));
+	scores[0] = match_still(apply, aw, ah, roi, rim, w, h);
+	for (int i = 0; i < static_cast<int>(extras.size()); i++) {
+		labels[static_cast<size_t>(i + 1)] = extras[static_cast<size_t>(i)].hide ? 1 : 0;
+		scores[static_cast<size_t>(i + 1)] = match_still(extras[static_cast<size_t>(i)].luma,
+								 extras[static_cast<size_t>(i)].w,
+								 extras[static_cast<size_t>(i)].h, roi, rim, w, h);
+	}
+	const int slot = mask_presence_still_slot(count, k_mask_presence_still_cap, scores.data(), labels.data(),
+						   mark == hud_mask_mark::hide ? 1 : 0);
+
+	hud_mask_still neu;
+	neu.hide = mark == hud_mask_mark::hide;
+	neu.w = w;
+	neu.h = h;
+	neu.luma = roi;
+
+	std::string path;
+	std::vector<uint8_t> out_apply;
+	int out_w = 0;
+	int out_h = 0;
+	std::vector<hud_mask_still> out_extras;
+	bool replaced = false;
+	int kept = 0;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		if (ctx->ref_gen != gen || !ctx->ref_valid)
+			return;
+		if (slot >= 1 && slot <= static_cast<int>(ctx->ref_extra.size())) {
+			ctx->ref_extra[static_cast<size_t>(slot - 1)] = neu;
+			replaced = true;
+		} else if (static_cast<int>(ctx->ref_extra.size()) + 1 < k_mask_presence_still_cap) {
+			ctx->ref_extra.push_back(neu);
+		} else if (!ctx->ref_extra.empty()) {
+			ctx->ref_extra[0] = neu;
+			replaced = true;
+		} else {
+			return;
+		}
+		if (ctx->mark_pending == mark)
+			ctx->mark_pending = hud_mask_mark::none;
+		ctx->ref_gen++;
+		out_apply = ctx->ref_luma;
+		out_w = ctx->ref_w;
+		out_h = ctx->ref_h;
+		out_extras = ctx->ref_extra;
+		kept = 1 + static_cast<int>(out_extras.size());
+		if (!ctx->mask_path.empty())
+			path = ref_path_for_mask(ctx->mask_path);
+	}
+	if (!write_href2(path, out_apply, out_w, out_h, out_extras)) {
+		obs_log(LOG_ERROR, "auto-hide failed to save labeled still '%s'", path.c_str());
+		return;
+	}
+	obs_log(LOG_INFO, "auto-hide %s a %s still (%d of %d)", replaced ? "replaced" : "labeled",
+		mark == hud_mask_mark::hide ? "hide" : "show", kept, k_mask_presence_still_cap);
+}
+
 void apply_score(hud_mask *ctx, float score, int match_pct)
 {
 	MaskPresenceGate gate;
@@ -219,6 +385,46 @@ void score_member(hud_mask *ctx, const uint8_t *rgba, uint32_t linesize, uint32_
 	mask_resize_luma(ref_luma, ref_w, ref_h, ref_s, rw, rh);
 	std::vector<uint8_t> rim;
 	mask_presence_rim(mask_s, rw, rh, 2, rim);
+
+	hud_mask_mark pending = hud_mask_mark::none;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		pending = ctx->mark_pending;
+	}
+	if (pending != hud_mask_mark::none) {
+		if (rw < 8 || rh < 8) {
+			std::lock_guard<std::mutex> lock(ctx->data_mu);
+			if (ctx->mark_pending == pending)
+				ctx->mark_pending = hud_mask_mark::none;
+			obs_log(LOG_WARNING, "auto-hide crop is too small to label");
+		} else {
+			label_crop(ctx, roi.data(), rw, rh, rim);
+		}
+	}
+
+	std::vector<hud_mask_still> extras;
+	{
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		extras = ctx->ref_extra;
+	}
+	if (!extras.empty() && rw >= 8 && rh >= 8) {
+		std::vector<float> scores(extras.size(), -1.f);
+		std::vector<uint8_t> labels(extras.size(), 0);
+		for (size_t i = 0; i < extras.size(); i++) {
+			labels[i] = extras[i].hide ? 1 : 0;
+			scores[i] = match_still(extras[i].luma, extras[i].w, extras[i].h, roi, rim, rw, rh);
+		}
+		const MaskPresenceVerdict verdict = mask_presence_override(
+			scores.data(), labels.data(), static_cast<int>(scores.size()), mask_presence_threshold(match_pct));
+		if (verdict == MaskPresenceVerdict::ForceHide) {
+			apply_score(ctx, k_force_hide_score, match_pct);
+			return;
+		}
+		if (verdict == MaskPresenceVerdict::ForceShow) {
+			apply_score(ctx, k_force_show_score, match_pct);
+			return;
+		}
+	}
 
 	float score = 0;
 	if (!mask_presence_match(ref_s, roi, rim, rw, rh, 3, &score))
@@ -494,6 +700,9 @@ void hud_mask_presence_clear_ref(hud_mask *ctx)
 		ctx->ref_w = ctx->ref_h = 0;
 		ctx->ref_luma.clear();
 		ctx->ref_band.clear();
+		ctx->ref_extra.clear();
+		ctx->mark_pending = hud_mask_mark::none;
+		ctx->ref_gen++;
 	}
 	if (mask_path.empty())
 		return;
@@ -517,7 +726,9 @@ void hud_mask_presence_load_ref(hud_mask *ctx)
 		ctx->ref_valid = false;
 		ctx->ref_luma.clear();
 		ctx->ref_band.clear();
+		ctx->ref_extra.clear();
 		ctx->ref_w = ctx->ref_h = 0;
+		ctx->ref_gen++;
 		if (ctx->mask_path.empty())
 			return;
 		path = ref_path_for_mask(ctx->mask_path);
@@ -534,8 +745,32 @@ void hud_mask_presence_load_ref(hud_mask *ctx)
 		return;
 	}
 	char magic[6];
+	if (fread(magic, 1, 6, f) != 6) {
+		fclose(f);
+		return;
+	}
+	if (memcmp(magic, k_ref_magic2, 6) == 0) {
+		std::vector<uint8_t> luma;
+		std::vector<hud_mask_still> extras;
+		int w = 0;
+		int h = 0;
+		const bool ok = read_href2(f, luma, w, h, extras);
+		fclose(f);
+		if (!ok)
+			return;
+		std::lock_guard<std::mutex> lock(ctx->data_mu);
+		ctx->ref_luma = std::move(luma);
+		ctx->ref_band.clear();
+		ctx->ref_extra = std::move(extras);
+		ctx->ref_w = w;
+		ctx->ref_h = h;
+		ctx->ref_valid = true;
+		ctx->ref_capture_pending = false;
+		ctx->ref_missing_logged = false;
+		return;
+	}
 	uint32_t wh[2] = {0, 0};
-	if (fread(magic, 1, 6, f) != 6 || memcmp(magic, k_ref_magic, 6) != 0 || fread(wh, 4, 2, f) != 2) {
+	if (memcmp(magic, k_ref_magic, 6) != 0 || fread(wh, 4, 2, f) != 2) {
 		fclose(f);
 		return;
 	}
@@ -556,6 +791,7 @@ void hud_mask_presence_load_ref(hud_mask *ctx)
 	std::lock_guard<std::mutex> lock(ctx->data_mu);
 	ctx->ref_luma = std::move(luma);
 	ctx->ref_band = std::move(band);
+	ctx->ref_extra.clear();
 	ctx->ref_w = w;
 	ctx->ref_h = h;
 	ctx->ref_valid = true;
@@ -585,6 +821,9 @@ bool hud_mask_presence_save_ref(hud_mask *ctx, const uint8_t *luma, const uint8_
 		ctx->ref_h = height;
 		ctx->ref_valid = true;
 		ctx->ref_capture_pending = false;
+		ctx->ref_extra.clear();
+		ctx->mark_pending = hud_mask_mark::none;
+		ctx->ref_gen++;
 		if (!ctx->mask_path.empty())
 			path = ref_path_for_mask(ctx->mask_path);
 	}

@@ -6,6 +6,15 @@
 #include <string>
 #include <vector>
 
+enum class hud_mask_mark : int { none = 0, show = 1, hide = 2 };
+
+struct hud_mask_still {
+	bool hide = false;
+	int w = 0;
+	int h = 0;
+	std::vector<uint8_t> luma;
+};
+
 struct hud_mask {
 	obs_source_t *self = nullptr;
 	obs_weak_source_t *target = nullptr;
@@ -40,6 +49,9 @@ struct hud_mask {
 	int ref_h = 0;
 	std::vector<uint8_t> ref_luma;
 	std::vector<uint8_t> ref_band;
+	std::vector<hud_mask_still> ref_extra;
+	hud_mask_mark mark_pending = hud_mask_mark::none;
+	uint32_t ref_gen = 0;
 
 	bool presence_shown = true;
 	int presence_streak = 0;

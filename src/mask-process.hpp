@@ -128,6 +128,20 @@ struct MaskPresenceGate {
  * Returns true when shown changed. hysteresis < 1 is treated as 1. */
 bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, int hysteresis = 3);
 
+constexpr int k_mask_presence_still_cap = 8;
+
+enum class MaskPresenceVerdict { UseGate, ForceShow, ForceHide };
+
+/* Extra stills only, not the Apply still. A hide score at or above threshold
+ * wins over any show score. Otherwise a show score at or above threshold forces
+ * show. Failed matches must be omitted, not passed as 0. */
+MaskPresenceVerdict mask_presence_override(const float *scores, const uint8_t *hide, int count, float threshold);
+
+/* count includes the Apply still at slot 0. Returns -1 to append, or an index
+ * in 1..count-1 to replace. Never returns 0. A full list replaces the closest
+ * same-label extra, else the closest extra. mark_hide != 0 is a hide mark. */
+int mask_presence_still_slot(int count, int cap, const float *scores, const uint8_t *hide, int mark_hide);
+
 /* Axis-aligned bounds of a loop, padded and clamped to the frame. empty if the
  * loop is shorter than 3 points or the clamped rect is empty. */
 struct MaskLoopBounds {

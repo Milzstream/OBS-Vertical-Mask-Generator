@@ -46,6 +46,8 @@ constexpr const char *k_mask_path = "mask_path";
 constexpr const char *k_expand = "expand";
 constexpr const char *k_feather = "feather";
 constexpr const char *k_auto_hide = "auto_hide";
+constexpr const char *k_mark_show = "auto_hide_mark_show";
+constexpr const char *k_mark_hide = "auto_hide_mark_hide";
 constexpr const char *k_fade = "auto_hide_fade";
 constexpr const char *k_match = "auto_hide_match";
 constexpr int k_mask_crop_pad = 32;
@@ -532,8 +534,10 @@ void hud_mask_update(void *data, obs_data_t *settings)
 		ctx->auto_hide = auto_hide;
 		ctx->fade_ms = fade_ms;
 		ctx->match_pct = match_pct;
-		if (!auto_hide)
+		if (!auto_hide) {
 			ctx->ref_capture_pending = false;
+			ctx->mark_pending = hud_mask_mark::none;
+		}
 	}
 	claim_mask_files(ctx, settings);
 	load_mask_texture(ctx, obs_data_get_string(settings, k_mask_path));
@@ -782,6 +786,38 @@ void set_mask_controls_enabled(obs_properties_t *props, bool has_mask, bool auto
 		obs_property_set_enabled(fade, enable_fade_match);
 	if (match)
 		obs_property_set_enabled(match, enable_fade_match);
+	obs_property_t *mark_show = obs_properties_get(props, k_mark_show);
+	obs_property_t *mark_hide = obs_properties_get(props, k_mark_hide);
+	if (mark_show)
+		obs_property_set_enabled(mark_show, enable_fade_match);
+	if (mark_hide)
+		obs_property_set_enabled(mark_hide, enable_fade_match);
+}
+
+bool queue_mark(hud_mask *ctx, hud_mask_mark mark)
+{
+	if (!ctx || mark == hud_mask_mark::none)
+		return false;
+	std::lock_guard<std::mutex> lock(ctx->data_mu);
+	if (!ctx->auto_hide || ctx->mask_path.empty())
+		return false;
+	if (!ctx->ref_valid) {
+		obs_log(LOG_WARNING, "auto-hide needs an Apply still before it can label a crop");
+		return false;
+	}
+	ctx->mark_pending = mark;
+	obs_log(LOG_INFO, "auto-hide will label the next crop %s", mark == hud_mask_mark::hide ? "hide" : "show");
+	return false;
+}
+
+bool mark_show_clicked(obs_properties_t *, obs_property_t *, void *priv)
+{
+	return queue_mark(static_cast<hud_mask *>(priv), hud_mask_mark::show);
+}
+
+bool mark_hide_clicked(obs_properties_t *, obs_property_t *, void *priv)
+{
+	return queue_mark(static_cast<hud_mask *>(priv), hud_mask_mark::hide);
 }
 
 bool draw_mask_clicked(obs_properties_t *props, obs_property_t *, void *priv)
@@ -885,6 +921,12 @@ obs_properties_t *hud_mask_properties(void *data)
 	obs_property_t *hide = obs_properties_add_bool(props, k_auto_hide, hide_label.c_str());
 	obs_property_set_long_description(hide, obs_module_text("HUDMask.AutoHide.Help"));
 	obs_property_set_modified_callback2(hide, auto_hide_modified, ctx);
+	obs_property_t *mark_show = obs_properties_add_button2(props, k_mark_show, obs_module_text("HUDMask.AutoHide.MarkShow"),
+							       mark_show_clicked, ctx);
+	obs_property_set_long_description(mark_show, obs_module_text("HUDMask.AutoHide.MarkShow.Help"));
+	obs_property_t *mark_hide = obs_properties_add_button2(props, k_mark_hide, obs_module_text("HUDMask.AutoHide.MarkHide"),
+							       mark_hide_clicked, ctx);
+	obs_property_set_long_description(mark_hide, obs_module_text("HUDMask.AutoHide.MarkHide.Help"));
 	obs_property_t *fade = obs_properties_add_int(props, k_fade, obs_module_text("HUDMask.AutoHide.Fade"), 0, 2000, 50);
 	obs_property_int_set_suffix(fade, " ms");
 	obs_property_set_long_description(fade, obs_module_text("HUDMask.AutoHide.Fade.Help"));
