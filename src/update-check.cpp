@@ -25,6 +25,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QPointer>
 #include <QPushButton>
 #include <QThread>
+#include <QTimer>
 #include <QUrl>
 #include <QWidget>
 
@@ -242,6 +243,22 @@ void show_update_failed(const std::string &page_url)
 
 #ifdef _WIN32
 
+std::atomic<bool> g_download_cancel{false};
+std::atomic<bool> g_download_running{false};
+
+struct DownloadResult {
+	std::wstring path;
+	bool ok = false;
+	std::atomic<bool> done{false};
+};
+
+DownloadResult g_dl;
+
+bool download_cancelled()
+{
+	return g_cancel.load() || g_download_cancel.load();
+}
+
 bool url_is_exe(const std::string &url)
 {
 	const size_t cut = url.find_first_of("?#");
@@ -349,7 +366,7 @@ bool download_installer(const std::string &start_url, std::wstring &dest)
 		return false;
 
 	for (int hop = 0; hop < 5; hop++) {
-		if (g_cancel.load())
+		if (download_cancelled())
 			return false;
 		std::wstring host;
 		std::wstring object;
@@ -434,7 +451,7 @@ bool download_installer(const std::string &start_url, std::wstring &dest)
 		const size_t k_max = 128u * 1024u * 1024u;
 		const size_t k_min = 64u * 1024u;
 		while (WinHttpReadData(request, buf, sizeof(buf), &got) && got > 0) {
-			if (g_cancel.load() || total + got > k_max) {
+			if (download_cancelled() || total + got > k_max) {
 				ok = false;
 				break;
 			}
@@ -447,9 +464,10 @@ bool download_installer(const std::string &start_url, std::wstring &dest)
 		}
 		CloseHandle(file);
 		close_http(request, connect, session);
-		if (!ok || total < k_min || g_cancel.load()) {
+		if (!ok || total < k_min || download_cancelled()) {
 			DeleteFileW(part.c_str());
-			obs_log(LOG_WARNING, "update check: installer download incomplete");
+			if (!download_cancelled())
+				obs_log(LOG_WARNING, "update check: installer download incomplete");
 			return false;
 		}
 		if (!MoveFileExW(part.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING)) {
@@ -491,40 +509,71 @@ bool launch_installer(const std::wstring &path)
 
 void start_installer_update(const ReleaseInfo info)
 {
-	if (g_download.joinable())
-		return;
+	if (g_download.joinable()) {
+		if (g_download_running.load())
+			return;
+		g_download.join();
+	}
+
+	g_download_cancel.store(false);
+	g_dl.ok = false;
+	g_dl.path.clear();
+	g_dl.done.store(false, std::memory_order_relaxed);
+
 	QWidget *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
-	auto *box = new QMessageBox(parent);
-	box->setIcon(QMessageBox::Information);
-	box->setWindowTitle(QString::fromUtf8(obs_module_text("HUDMask.Update.Title")));
-	box->setText(QString::fromUtf8(obs_module_text("HUDMask.Update.Downloading")));
-	box->setStandardButtons(QMessageBox::NoButton);
-	box->setAttribute(Qt::WA_DeleteOnClose);
-	box->setModal(true);
-	box->show();
-	g_download_box = box;
+	QMessageBox box(parent);
+	box.setIcon(QMessageBox::Information);
+	box.setWindowTitle(QString::fromUtf8(obs_module_text("HUDMask.Update.Title")));
+	box.setText(QString::fromUtf8(obs_module_text("HUDMask.Update.Downloading")));
+	QPushButton *cancel =
+		box.addButton(QString::fromUtf8(obs_module_text("HUDMask.Update.Cancel")), QMessageBox::RejectRole);
+	box.setDefaultButton(cancel);
+	g_download_box = &box;
+
+	QObject::connect(&box, &QDialog::rejected, &box, []() {
+		g_download_cancel.store(true);
+	});
+	QObject::connect(&box, &QMessageBox::buttonClicked, &box, [cancel](QAbstractButton *button) {
+		if (button == cancel)
+			g_download_cancel.store(true);
+	});
+
+	QTimer timer(&box);
+	timer.setInterval(100);
+	QObject::connect(&timer, &QTimer::timeout, &box, [&box, &timer]() {
+		if (!g_dl.done.load(std::memory_order_acquire))
+			return;
+		timer.stop();
+		box.done(QDialog::Accepted);
+	});
+	timer.start();
+
+	g_download_running.store(true);
 	g_download = std::thread([info]() {
 		std::wstring path;
-		const bool ok = download_installer(info.download_url, path) && !g_cancel.load();
-		QObject *ctx = QCoreApplication::instance();
-		if (!ctx)
-			return;
-		QMetaObject::invokeMethod(
-			ctx,
-			[ok, path, info]() {
-				if (g_download_box) {
-					g_download_box->close();
-					g_download_box = nullptr;
-				}
-				if (g_cancel.load())
-					return;
-				if (!ok || !launch_installer(path)) {
-					show_update_failed(info.page_url.empty() ? info.download_url : info.page_url);
-					return;
-				}
-			},
-			Qt::QueuedConnection);
+		const bool ok = download_installer(info.download_url, path) && !download_cancelled();
+		if (ok)
+			obs_log(LOG_INFO, "update check: installer download finished");
+		else if (!download_cancelled())
+			obs_log(LOG_WARNING, "update check: installer download failed");
+		g_dl.path = std::move(path);
+		g_dl.ok = ok;
+		g_dl.done.store(true, std::memory_order_release);
+		g_download_running.store(false);
 	});
+
+	box.exec();
+	timer.stop();
+	g_download_box = nullptr;
+	if (g_cancel.load() || g_download_cancel.load())
+		return;
+	if (!g_dl.done.load(std::memory_order_acquire) || !g_dl.ok) {
+		show_update_failed(info.page_url.empty() ? info.download_url : info.page_url);
+		return;
+	}
+	obs_log(LOG_INFO, "update check: starting installer");
+	if (!launch_installer(g_dl.path))
+		show_update_failed(info.page_url.empty() ? info.download_url : info.page_url);
 }
 
 #endif
