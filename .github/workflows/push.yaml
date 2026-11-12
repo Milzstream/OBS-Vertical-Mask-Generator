@@ -128,6 +128,12 @@ jobs:
               echo "- **Installer.** An update started from OBS closes OBS before copying files, then opens it again. The previous installer rolled back while OBS still had the plugin open."
               echo
             fi
+            if [[ "${{ steps.check.outputs.version }}" == "0.7.4" ]]; then
+              echo "## What's new"
+              echo
+              echo "- **Installer.** Reopening OBS after an update no longer asks to run in Safe Mode."
+              echo
+            fi
             echo "Requires OBS Studio 33 or newer. OBS 32 will not load this build. Close OBS before installing."
             echo
             echo "The plugin DLL sits next to the \`data\` folder. The installer removes leftover copies from \`C:\\Program Files\\obs-studio\\\` and from the old ProgramData \`bin\\64bit\` layout. A portable OBS copy in a custom folder is not removed."

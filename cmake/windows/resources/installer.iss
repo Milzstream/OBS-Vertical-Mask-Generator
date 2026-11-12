@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.7.3"
+#define MyAppVersion "0.7.4"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.7.3-windows-x64"
+#define OutputName "source-cutout-0.7.4-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -229,6 +229,51 @@ begin
   end;
 end;
 
+function DeleteRunSentinels(const Dir: String): Integer;
+var
+  FindRec: TFindRec;
+  Path: String;
+begin
+  Result := 0;
+  if not DirExists(Dir) then
+    Exit;
+  if not FindFirst(Dir + '\run_*', FindRec) then
+    Exit;
+  try
+    repeat
+      if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+      begin
+        Path := Dir + '\' + FindRec.Name;
+        if DeleteFile(Path) then
+          Result := Result + 1
+        else
+          Log('Source Cutout: could not delete ' + Path);
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+procedure ClearCrashSentinel(const ExePath: String);
+var
+  Removed: Integer;
+  AppData: String;
+  Root: String;
+begin
+  Removed := 0;
+  if ExePath <> '' then
+  begin
+    Root := ExtractFileDir(ExtractFileDir(ExtractFileDir(ExePath)));
+    Removed := Removed + DeleteRunSentinels(Root + '\config\obs-studio\.sentinel');
+  end;
+  AppData := GetEnv('APPDATA');
+  if AppData <> '' then
+    Removed := Removed + DeleteRunSentinels(AppData + '\obs-studio\.sentinel');
+  if Removed > 0 then
+    Log('Source Cutout: cleared crash sentinel');
+end;
+
 procedure DeinitializeSetup;
 var
   Code: Integer;
@@ -242,6 +287,7 @@ begin
     Log('Source Cutout: OBS path unknown, not relaunching');
     Exit;
   end;
+  ClearCrashSentinel(Path);
   if ShellExec('', Path, '', ExtractFileDir(Path), SW_SHOWNORMAL, ewNoWait, Code) then
     Log('Source Cutout: relaunched OBS')
   else
