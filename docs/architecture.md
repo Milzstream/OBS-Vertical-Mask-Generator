@@ -56,7 +56,7 @@ Optional, off by default. A plugin-wide cycle (~10 Hz) groups visible, auto-hide
 
 ## Highlight tools (setup only)
 
-User paint is the mask. Optional **Snap Edges** walks the painted border and pulls it onto nearby frame contrast (any color). **Magic Select** runs a classical color-and-edge pick inside a rough loop. It does not call ONNX. A miss leaves the mask untouched. Snap Edges stays its own tool. Transparent and glowing HUD can still miss. **Fill** floods an outline and swallows the ring. None of this runs at 60 fps.
+User paint is the mask. Optional **Snap Edges** walks the painted border and pulls it onto nearby frame contrast (any color). **Magic Select** runs a classical color-and-edge pick inside a rough loop. A miss leaves the mask untouched. Snap Edges stays its own tool. Transparent and glowing HUD can still miss. **Fill** floods an outline and swallows the ring. None of this runs at 60 fps.
 
 Crop = bounding box of remaining opaque pixels, padded 32px. Mask PNG is saved at crop size as `masks/<source-uuid>.png` under the plugin config directory. A duplicate copies that PNG and its still/reference beside its own uuid. At draw time the saved insets are scaled from the authored filtered size to the live filtered size, so a base-resolution change does not shift the cut-out. A missing mask draws nothing. A missing auto-hide reference does not adopt the live frame.
 

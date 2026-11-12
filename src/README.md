@@ -9,7 +9,6 @@ C++ OBS plugin bootstrapped from [obs-plugintemplate](https://github.com/obsproj
 | `cutout-editor.cpp` | Draw-mask editor (Qt) |
 | `saved-frames.cpp` | Overrides window for auto-hide stills (Qt) |
 | `mask-process.cpp` | Expand, feather, flood fill/erase, snap, classical Magic Select pick, crop bbox (no OBS/Qt) |
-| `magic-sam.cpp` | Unused by Magic Select. MobileSAM remains until the ONNX stack is removed |
 | `presence.cpp` | Auto-hide shared cycle and still match |
 | `update-check.cpp` | GitHub release check on OBS launch |
 | `update-parse.hpp` | Version and GitHub JSON helpers (no OBS/Qt) |

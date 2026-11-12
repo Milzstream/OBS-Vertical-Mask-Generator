@@ -1277,16 +1277,6 @@ MaskLoopBounds mask_loop_bounds(const std::vector<MaskPoint> &loop, int frame_w,
 	return b;
 }
 
-void mask_sam_box_to_input(float x0, float y0, float x1, float y1, int crop_w, int crop_h, float out_xyxy[4])
-{
-	const float longest = static_cast<float>(std::max(crop_w, crop_h));
-	const float scale = longest > 0.f ? 1024.f / longest : 1.f;
-	out_xyxy[0] = x0 * scale;
-	out_xyxy[1] = y0 * scale;
-	out_xyxy[2] = x1 * scale;
-	out_xyxy[3] = y1 * scale;
-}
-
 bool mask_point_in_loop(float x, float y, const std::vector<MaskPoint> &loop)
 {
 	if (loop.size() < 3)

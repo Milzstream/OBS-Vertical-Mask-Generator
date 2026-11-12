@@ -157,9 +157,6 @@ struct MaskLoopBounds {
 
 MaskLoopBounds mask_loop_bounds(const std::vector<MaskPoint> &loop, int frame_w, int frame_h, int pad);
 
-/* Map a box in crop pixels into the 1024-long-side space MobileSAM's decoder expects. */
-void mask_sam_box_to_input(float x0, float y0, float x1, float y1, int crop_w, int crop_h, float out_xyxy[4]);
-
 bool mask_point_in_loop(float x, float y, const std::vector<MaskPoint> &loop);
 
 /* Zero pixels whose center is outside the loop. */
