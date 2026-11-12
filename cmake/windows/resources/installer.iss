@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.7.2"
+#define MyAppVersion "0.7.3"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.7.2-windows-x64"
+#define OutputName "source-cutout-0.7.3-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -52,6 +52,7 @@ CloseApplications=yes
 CloseApplicationsFilter=obs64.exe,obs32.exe
 RestartApplications=no
 MinVersion=10.0
+SetupLogging=yes
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} OBS plugin
@@ -82,6 +83,7 @@ Filename: "{code:OBSLaunchPath}"; Description: "Launch OBS Studio"; Flags: shell
 [Code]
 var
   OBSExePath: String;
+  ClosedOBS: Boolean;
 
 function QueryProcessPath(const Name: String): String;
 var
@@ -139,6 +141,72 @@ begin
   end;
 end;
 
+function TaskkillExe: String;
+begin
+  Result := ExpandConstant('{sys}\taskkill.exe');
+end;
+
+function RunTaskkill(const Params: String): Integer;
+var
+  Code: Integer;
+begin
+  if not Exec(TaskkillExe, Params, '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Code := -1;
+  Log('Source Cutout: taskkill ' + Params + ' exit ' + IntToStr(Code));
+  Result := Code;
+end;
+
+procedure StartTaskkill(const Params: String);
+var
+  Code: Integer;
+begin
+  if Exec(ExpandConstant('{cmd}'), '/C start "" /B "' + TaskkillExe + '" ' + Params, '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Log('Source Cutout: started taskkill ' + Params)
+  else
+    Log('Source Cutout: could not start taskkill ' + Params);
+end;
+
+function WaitUntilOBSExits(const Milliseconds: Integer): Boolean;
+var
+  Remaining: Integer;
+begin
+  Remaining := Milliseconds;
+  while IsOBSRunning and (Remaining > 0) do
+  begin
+    Sleep(250);
+    Remaining := Remaining - 250;
+  end;
+  Result := not IsOBSRunning;
+end;
+
+function CloseRunningOBS: Boolean;
+begin
+  if not IsOBSRunning then
+  begin
+    Result := True;
+    Exit;
+  end;
+  Log('Source Cutout: closing OBS');
+  Sleep(2000);
+  if IsOBSRunning then
+  begin
+    StartTaskkill('/IM obs64.exe');
+    StartTaskkill('/IM obs32.exe');
+    if not WaitUntilOBSExits(4000) then
+    begin
+      RunTaskkill('/F /IM obs64.exe');
+      RunTaskkill('/F /IM obs32.exe');
+      WaitUntilOBSExits(2000);
+    end;
+  end;
+  Result := not IsOBSRunning;
+  ClosedOBS := Result;
+  if Result then
+    Log('Source Cutout: OBS closed')
+  else
+    Log('Source Cutout: OBS still running');
+end;
+
 function InitializeSetup: Boolean;
 begin
   Result := True;
@@ -146,7 +214,11 @@ begin
   if OBSExePath = '' then
     OBSExePath := QueryProcessPath('obs32.exe');
   if WizardSilent then
+  begin
+    if IsOBSRunning and not CloseRunningOBS then
+      Result := False;
     Exit;
+  end;
   while IsOBSRunning do
   begin
     if MsgBox('OBS Studio is running. Close OBS, then click Retry to install Source Cutout.', mbInformation, MB_RETRYCANCEL) = IDCANCEL then
@@ -155,4 +227,23 @@ begin
       Exit;
     end;
   end;
+end;
+
+procedure DeinitializeSetup;
+var
+  Code: Integer;
+  Path: String;
+begin
+  if (not WizardSilent) or (not ClosedOBS) then
+    Exit;
+  Path := OBSLaunchPath('');
+  if Path = '' then
+  begin
+    Log('Source Cutout: OBS path unknown, not relaunching');
+    Exit;
+  end;
+  if ShellExec('', Path, '', ExtractFileDir(Path), SW_SHOWNORMAL, ewNoWait, Code) then
+    Log('Source Cutout: relaunched OBS')
+  else
+    Log('Source Cutout: ShellExec failed ' + IntToStr(Code));
 end;
