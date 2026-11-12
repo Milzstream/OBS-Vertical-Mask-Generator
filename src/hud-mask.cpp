@@ -12,6 +12,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include "cutout-editor.hpp"
 #include "mask-process.hpp"
 #include "presence.hpp"
+#include "saved-frames.hpp"
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
@@ -46,6 +47,7 @@ constexpr const char *k_mask_path = "mask_path";
 constexpr const char *k_expand = "expand";
 constexpr const char *k_feather = "feather";
 constexpr const char *k_auto_hide = "auto_hide";
+constexpr const char *k_saved_frames = "auto_hide_saved_frames";
 constexpr const char *k_fade = "auto_hide_fade";
 constexpr const char *k_match = "auto_hide_match";
 constexpr int k_mask_crop_pad = 32;
@@ -487,6 +489,7 @@ void *hud_mask_create(obs_data_t *settings, obs_source_t *source)
 void hud_mask_destroy(void *data)
 {
 	auto *ctx = static_cast<hud_mask *>(data);
+	hud_mask_saved_frames_close(ctx);
 	hud_mask_presence_unregister(ctx);
 	set_target(ctx, "");
 	free_mask_texture(ctx);
@@ -532,8 +535,10 @@ void hud_mask_update(void *data, obs_data_t *settings)
 		ctx->auto_hide = auto_hide;
 		ctx->fade_ms = fade_ms;
 		ctx->match_pct = match_pct;
-		if (!auto_hide)
+		if (!auto_hide) {
 			ctx->ref_capture_pending = false;
+			ctx->mark_pending = hud_mask_mark::none;
+		}
 	}
 	claim_mask_files(ctx, settings);
 	load_mask_texture(ctx, obs_data_get_string(settings, k_mask_path));
@@ -782,6 +787,31 @@ void set_mask_controls_enabled(obs_properties_t *props, bool has_mask, bool auto
 		obs_property_set_enabled(fade, enable_fade_match);
 	if (match)
 		obs_property_set_enabled(match, enable_fade_match);
+	obs_property_t *frames = obs_properties_get(props, k_saved_frames);
+	if (frames)
+		obs_property_set_enabled(frames, enable_fade_match);
+}
+
+bool queue_mark(hud_mask *ctx, hud_mask_mark mark)
+{
+	if (!ctx || mark == hud_mask_mark::none)
+		return false;
+	std::lock_guard<std::mutex> lock(ctx->data_mu);
+	if (!ctx->auto_hide || ctx->mask_path.empty())
+		return false;
+	if (!ctx->ref_valid) {
+		obs_log(LOG_WARNING, "auto-hide needs an Apply still before it can label a crop");
+		return false;
+	}
+	ctx->mark_pending = mark;
+	obs_log(LOG_INFO, "auto-hide will label the next crop %s", mark == hud_mask_mark::hide ? "hide" : "show");
+	return true;
+}
+
+bool saved_frames_clicked(obs_properties_t *, obs_property_t *, void *priv)
+{
+	hud_mask_open_saved_frames(static_cast<hud_mask *>(priv));
+	return false;
 }
 
 bool draw_mask_clicked(obs_properties_t *props, obs_property_t *, void *priv)
@@ -883,8 +913,11 @@ obs_properties_t *hud_mask_properties(void *data)
 	const std::string hide_label = std::string(obs_module_text("HUDMask.AutoHide")) +
 				       obs_module_text("HUDMask.AutoHide.Experimental");
 	obs_property_t *hide = obs_properties_add_bool(props, k_auto_hide, hide_label.c_str());
-	obs_property_set_long_description(hide, obs_module_text("HUDMask.AutoHide.Help"));
 	obs_property_set_modified_callback2(hide, auto_hide_modified, ctx);
+	obs_property_t *frames = obs_properties_add_button2(props, k_saved_frames,
+							    obs_module_text("HUDMask.AutoHide.SavedFrames"),
+							    saved_frames_clicked, ctx);
+	obs_property_set_long_description(frames, obs_module_text("HUDMask.AutoHide.SavedFrames.Help"));
 	obs_property_t *fade = obs_properties_add_int(props, k_fade, obs_module_text("HUDMask.AutoHide.Fade"), 0, 2000, 50);
 	obs_property_int_set_suffix(fade, " ms");
 	obs_property_set_long_description(fade, obs_module_text("HUDMask.AutoHide.Fade.Help"));
@@ -1047,6 +1080,11 @@ obs_source_info make_info()
 }
 
 } // namespace
+
+bool hud_mask_queue_mark(hud_mask *ctx, hud_mask_mark mark)
+{
+	return queue_mark(ctx, mark);
+}
 
 void hud_mask_load_effects(void)
 {

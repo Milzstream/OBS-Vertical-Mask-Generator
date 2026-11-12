@@ -920,6 +920,47 @@ bool mask_presence_gate(MaskPresenceGate &gate, float score, int match_percent, 
 	return false;
 }
 
+MaskPresenceVerdict mask_presence_override(const float *scores, const uint8_t *hide, int count, float threshold)
+{
+	if (!scores || !hide || count < 1)
+		return MaskPresenceVerdict::UseGate;
+	bool show = false;
+	for (int i = 0; i < count; i++) {
+		if (!(scores[i] >= threshold))
+			continue;
+		if (hide[i])
+			return MaskPresenceVerdict::ForceHide;
+		show = true;
+	}
+	return show ? MaskPresenceVerdict::ForceShow : MaskPresenceVerdict::UseGate;
+}
+
+int mask_presence_still_slot(int count, int cap, const float *scores, const uint8_t *hide, int mark_hide)
+{
+	if (cap < 2)
+		cap = 2;
+	if (count < cap)
+		return -1;
+	const int want = mark_hide ? 1 : 0;
+	int same = -1;
+	int any = -1;
+	float same_score = -2.f;
+	float any_score = -2.f;
+	for (int i = 1; i < count; i++) {
+		const float s = scores ? scores[i] : 0.f;
+		if (s > any_score) {
+			any_score = s;
+			any = i;
+		}
+		const int label = (hide && hide[i]) ? 1 : 0;
+		if (label == want && s > same_score) {
+			same_score = s;
+			same = i;
+		}
+	}
+	return same >= 0 ? same : any;
+}
+
 void mask_blob_outline(const std::vector<uint8_t> &mask, int width, int height, std::vector<uint8_t> &outline)
 {
 	const int n = width * height;
