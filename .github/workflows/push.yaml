@@ -116,6 +116,12 @@ jobs:
               echo "- **Updater.** The download window closes and the installer starts when the file is ready. Cancel leaves OBS open. If a download window is already stuck, run this release's installer yourself."
               echo
             fi
+            if [[ "${{ steps.check.outputs.version }}" == "0.7.2" ]]; then
+              echo "## What's new"
+              echo
+              echo "- **Installer.** If OBS is set to run as administrator, the installer no longer errors while reopening it. Launch OBS Studio on the last page starts it normally."
+              echo
+            fi
             echo "Requires OBS Studio 33 or newer. OBS 32 will not load this build. Close OBS before installing."
             echo
             echo "The plugin DLL sits next to the \`data\` folder. The installer removes leftover copies from \`C:\\Program Files\\obs-studio\\\` and from the old ProgramData \`bin\\64bit\` layout. A portable OBS copy in a custom folder is not removed."
