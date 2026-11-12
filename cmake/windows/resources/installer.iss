@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.7.1"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.7.0-windows-x64"
+#define OutputName "source-cutout-0.7.1-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
