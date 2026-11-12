@@ -59,14 +59,6 @@ cmake --build --preset windows-x64
 ctest --test-dir build_x64 -C RelWithDebInfo --output-on-failure
 ```
 
-Magic Select does not need ONNX Runtime. The models and fetch script stay until that stack is removed. Fetch the DLL only for the leftover picker, then rebuild:
-
-```
-powershell -File .github/scripts/Fetch-MobileSAM.ps1
-```
-
-That places `onnxruntime.dll` under `third_party/onnxruntime/`. The build copies it next to the plugin when it is present. Reconfigure before packaging an installer so the DLL is included. Magic Select works without it.
-
 Merging a version bump in `buildspec.json` to `main` tags that version and publishes a GitHub Release with the installer, portable zip, and source zip. CI runs the same `ctest` command on the Windows job.
 
 ## License

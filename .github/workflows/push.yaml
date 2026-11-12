@@ -103,6 +103,13 @@ jobs:
             echo
             echo "Add **Source Cutout**, pick a source, draw a rough highlight, clean it up, and place the cut-out. Auto-hide is optional and experimental."
             echo
+            if [[ "${{ steps.check.outputs.version }}" == "0.7.0" ]]; then
+              echo "## What's new"
+              echo
+              echo "- **Overrides.** While Auto-hide is on, Overrides can mark the current crop show or hide. A matching hide still forces hide. Otherwise a matching show still forces show. Match does not change those marks. The Draw mask still stays out of that window."
+              echo "- Magic Select no longer ships MobileSAM, ONNX Runtime, or model files. The classical pick is unchanged."
+              echo
+            fi
             echo "Requires OBS Studio 33 or newer. OBS 32 will not load this build. Close OBS before installing."
             echo
             echo "The plugin DLL sits next to the \`data\` folder. The installer removes leftover copies from \`C:\\Program Files\\obs-studio\\\` and from the old ProgramData \`bin\\64bit\` layout. A portable OBS copy in a custom folder is not removed."

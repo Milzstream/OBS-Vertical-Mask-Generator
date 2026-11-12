@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.6.0"
+#define MyAppVersion "0.7.0"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.6.0-windows-x64"
+#define OutputName "source-cutout-0.7.0-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -64,6 +64,9 @@ Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\{#PluginName}.dll"
 Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\{#PluginName}.pdb"
 Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\onnxruntime.dll"
 Type: files; Name: "{pf}\obs-studio\obs-plugins\64bit\DirectML.dll"
+Type: files; Name: "{app}\onnxruntime.dll"
+Type: files; Name: "{app}\DirectML.dll"
+Type: filesandordirs; Name: "{app}\data\models"
 Type: filesandordirs; Name: "{pf}\obs-studio\data\obs-plugins\{#PluginName}"
 Type: filesandordirs; Name: "{commonappdata}\obs-studio\plugins\{#PluginName}\bin"
 
