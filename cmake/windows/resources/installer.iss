@@ -2,7 +2,7 @@
 #define MyAppName "Source Cutout"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "0.7.1"
+#define MyAppVersion "0.7.2"
 #endif
 #ifndef MyAppPublisher
 #define MyAppPublisher "Milzstream"
@@ -20,7 +20,7 @@
 #define OutputDir "..\..\..\release"
 #endif
 #ifndef OutputName
-#define OutputName "source-cutout-0.7.1-windows-x64"
+#define OutputName "source-cutout-0.7.2-windows-x64"
 #endif
 #ifndef LicenseFile
 #define LicenseFile "..\..\..\LICENSE"
@@ -50,7 +50,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayName={#MyAppName} (OBS Plugin)
 CloseApplications=yes
 CloseApplicationsFilter=obs64.exe,obs32.exe
-RestartApplications=yes
+RestartApplications=no
 MinVersion=10.0
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -77,7 +77,7 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Type: filesandordirs; Name: "{app}"
 
 [Run]
-Filename: "{code:OBSLaunchPath}"; Description: "Launch OBS Studio"; Flags: nowait postinstall skipifsilent; Check: ShouldOfferOBSLaunch
+Filename: "{code:OBSLaunchPath}"; Description: "Launch OBS Studio"; Flags: shellexec nowait postinstall skipifsilent; Check: ShouldOfferOBSLaunch
 
 [Code]
 var
